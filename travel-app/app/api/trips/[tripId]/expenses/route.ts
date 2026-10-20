@@ -12,6 +12,8 @@ function mapExpense(row: Record<string, unknown>) {
     currency: row.currency as Currency,
     incurredOn: String(row.incurred_on),
     createdAt: String(row.created_at),
+    ...(typeof row.notes === "string" ? { notes: row.notes } : {}),
+    ...(typeof row.activity_id === "string" ? { activityId: row.activity_id } : {}),
   };
 }
 
@@ -22,6 +24,15 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
     const body: unknown = await request.json().catch(() => null);
     const expense = validateExpense(body);
     if (!expense) return Response.json({ error: "Los datos del gasto no son válidos." }, { status: 400 });
+    if (expense.activityId) {
+      const { data: activity, error: activityError } = await supabase.from("activities")
+        .select("id")
+        .eq("id", expense.activityId)
+        .eq("trip_id", tripId)
+        .maybeSingle();
+      if (activityError) throw activityError;
+      if (!activity) return Response.json({ error: "La actividad relacionada no pertenece a este viaje o ya no existe." }, { status: 400 });
+    }
     const { data, error } = await supabase
       .from("expenses")
       .insert({
@@ -32,6 +43,8 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
         amount: expense.amount,
         currency: expense.currency,
         incurred_on: expense.incurredOn,
+        notes: expense.notes ?? "",
+        activity_id: expense.activityId ?? null,
       })
       .select("*")
       .single();

@@ -43,6 +43,16 @@ describe("preferencias de perfil", () => {
     expect(await getProfilePreferences()).toEqual(preferences);
   });
 
+  it("no presenta datos personales ficticios cuando todavía no hay preferencias guardadas", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "demo");
+    const saved = await getProfilePreferences();
+
+    expect(saved.name).toBe("");
+    expect(saved.interests).toEqual([]);
+    expect(saved.travelTypes).toEqual([]);
+    expect(saved.budgetPreference).toBe("");
+  });
+
   it("aísla las preferencias locales de cuentas distintas en el mismo navegador", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "demo");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");

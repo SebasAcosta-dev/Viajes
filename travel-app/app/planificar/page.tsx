@@ -2,6 +2,7 @@ import Link from "next/link";
 import { destinations, seedTrips } from "@/app/data/demo-data";
 import { generateItineraryFromTrip } from "@/app/lib/itinerary";
 import { SaveTripButton } from "@/app/components/save-trip-button";
+import { ManualTripPlanner } from "@/app/components/manual-trip-planner";
 
 const exampleForm = {
   origin: "Madrid",
@@ -28,10 +29,17 @@ export default function PlanificarPage() {
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Planificación</p>
           <h1 className="text-3xl font-bold sm:text-4xl">Planificar viaje</h1>
         </div>
-        <Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">Volver al inicio</Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/destinos" className="min-h-11 rounded-full border border-emerald-700 px-4 py-3 text-sm font-semibold text-emerald-800">Explorar destinos</Link>
+          <Link href="/" className="min-h-11 rounded-full bg-slate-900 px-4 py-3 text-sm font-medium text-white">Volver al inicio</Link>
+        </div>
       </div>
 
-      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)] 2xl:gap-8">
+      <ManualTripPlanner />
+
+      <details className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <summary className="cursor-pointer text-lg font-semibold">Ver ejemplo local del catálogo y plan de demostración</summary>
+      <div className="mt-4 grid min-w-0 gap-6 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)] 2xl:gap-8">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold">Configuración</h2>
           <dl className="mt-4 space-y-3 text-sm text-slate-700">
@@ -111,6 +119,7 @@ export default function PlanificarPage() {
           ))}
         </div>
       </section>
+      </details>
     </main>
   );
 }

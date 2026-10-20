@@ -13,6 +13,8 @@ function mapExpense(row: Record<string, unknown>): SavedExpense {
     currency: row.currency as Currency,
     incurredOn: String(row.incurred_on),
     createdAt: String(row.created_at),
+    ...(typeof row.notes === "string" ? { notes: row.notes } : {}),
+    ...(typeof row.activity_id === "string" ? { activityId: row.activity_id } : {}),
   };
 }
 
@@ -147,9 +149,28 @@ function missingMetadataMigration(error: { code?: string; message?: string; deta
   return undefined;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { supabase } = await getAuthenticatedSupabase();
+    if (new URL(request.url).searchParams.get("summary") === "1") {
+      const { data, error } = await supabase
+        .from("trips")
+        .select("id,name,destination,status,start_date,end_date,budget,currency")
+        .order("updated_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      const trips = (data ?? []).map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        destination: String(row.destination),
+        status: String(row.status),
+        startDate: typeof row.start_date === "string" ? row.start_date : null,
+        endDate: typeof row.end_date === "string" ? row.end_date : null,
+        budget: Number(row.budget),
+        currency: row.currency as Currency,
+      }));
+      return Response.json({ trips });
+    }
     const { data, error } = await supabase.from("trips").select(tripSelect).order("updated_at", { ascending: false });
     if (error) throw error;
     return Response.json({ trips: (data ?? []).map((row) => mapTrip(row as Record<string, unknown>)) });

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/app/lib/supabase/browser";
 import { getPersistenceMode } from "@/app/lib/persistence/mode";
+import { FavoriteDestinations } from "@/app/components/favorite-destinations";
+import { ProfilePreferencesForm } from "@/app/components/profile-preferences-form";
 
 export default function AccountPage() {
   const [email, setEmail] = useState("");
@@ -12,6 +14,8 @@ export default function AccountPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const supabaseMode = getPersistenceMode() === "supabase";
   const supabaseConfigured = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
@@ -63,7 +67,7 @@ export default function AccountPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 sm:py-10">
+    <main className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Cuenta</p>
@@ -107,6 +111,18 @@ export default function AccountPage() {
         )}
         {message && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{message}</p>}
         {error && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
+      </section>
+      <section className="mt-6 grid min-w-0 gap-4 xl:grid-cols-2" aria-label="Preferencias y destinos favoritos">
+        <details onToggle={(event) => setPreferencesOpen(event.currentTarget.open)} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <summary className="cursor-pointer text-lg font-semibold text-slate-900">Preferencias de viaje</summary>
+          <p className="my-4 text-sm leading-relaxed text-slate-600">Configura moneda, intereses, ritmo y tipos de viaje. Se usarán como valores iniciales al planificar.</p>
+          {preferencesOpen && <ProfilePreferencesForm />}
+        </details>
+        <details onToggle={(event) => setFavoritesOpen(event.currentTarget.open)} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <summary className="cursor-pointer text-lg font-semibold text-slate-900">Destinos favoritos</summary>
+          <p className="my-4 text-sm leading-relaxed text-slate-600">Los favoritos guardados también siguen disponibles en el selector de destinos.</p>
+          {favoritesOpen && <FavoriteDestinations />}
+        </details>
       </section>
     </main>
   );

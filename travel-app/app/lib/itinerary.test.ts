@@ -150,4 +150,34 @@ describe("getTripBudgetSummary", () => {
     expect(summary.unknownActivityPrices).toBe(1);
     expect(summary.projectionIncomplete).toBe(true);
   });
+
+  it("sustituye la estimación de una actividad por su gasto real vinculado", () => {
+    const summary = getTripBudgetSummary({
+      budget: 100,
+      currency: "EUR",
+      travelers: 1,
+      itinerary: [{
+        id: "d1",
+        dayNumber: 1,
+        theme: "Día 1",
+        summary: "",
+        items: [{
+          id: "activity-1",
+          name: "Entrada",
+          description: "",
+          durationMinutes: 60,
+          estimate: 25,
+          priceStatus: "estimate",
+          currency: "EUR",
+          order: 1,
+          notes: "",
+          source: "orientativo",
+        }],
+      }],
+      expenses: [{ amount: 27, currency: "EUR", activityId: "activity-1" }],
+    });
+    expect(summary.totalEstimated).toBe(0);
+    expect(summary.actualExpenses).toBe(27);
+    expect(summary.projectedRemaining).toBe(73);
+  });
 });

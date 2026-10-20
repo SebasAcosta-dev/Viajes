@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ProfilePreferences } from "@/app/lib/types";
 
-const { pushMock, getPlannerDraftScopeMock, getProfilePreferencesMock, listFavoritesMock, listTripsMock } = vi.hoisted(() => ({
+const { pushMock, getPlannerDraftScopeMock, getProfilePreferencesMock, listFavoritesMock, listTripSummariesMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   getPlannerDraftScopeMock: vi.fn(),
   getProfilePreferencesMock: vi.fn(),
   listFavoritesMock: vi.fn(),
-  listTripsMock: vi.fn(),
+  listTripSummariesMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -19,7 +19,7 @@ vi.mock("@/app/lib/persistence/profile-client", () => ({
 }));
 vi.mock("@/app/lib/persistence/client", () => ({
   listFavorites: listFavoritesMock,
-  listTrips: listTripsMock,
+  listTripSummaries: listTripSummariesMock,
   persistenceLabel: () => "demo",
   toggleFavorite: vi.fn(),
 }));
@@ -44,7 +44,7 @@ afterEach(() => {
   getPlannerDraftScopeMock.mockReset();
   getProfilePreferencesMock.mockReset();
   listFavoritesMock.mockReset();
-  listTripsMock.mockReset();
+  listTripSummariesMock.mockReset();
 });
 
 describe("formulario del planificador", () => {
@@ -52,7 +52,7 @@ describe("formulario del planificador", () => {
     getPlannerDraftScopeMock.mockResolvedValue("anonymous");
     getProfilePreferencesMock.mockResolvedValue(profile);
     listFavoritesMock.mockResolvedValue([]);
-    listTripsMock.mockResolvedValue([]);
+    listTripSummariesMock.mockResolvedValue([]);
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       source: "demo",
       text: "Respuesta demo",

@@ -18,7 +18,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
     if (currentError) throw currentError;
     if (!current) return Response.json({ error: "No se encontró la actividad o no tienes permiso para modificarla." }, { status: 404 });
 
-    const currentStart = typeof current.start_time === "string" ? current.start_time.slice(0, 5) : undefined;
+    const currentStart = update.startTime ?? (typeof current.start_time === "string" ? current.start_time.slice(0, 5) : undefined);
     const endTime = currentStart ? calculateScheduledEnd(currentStart, update.durationMinutes ?? 0) : undefined;
     if (currentStart && !endTime) {
       return Response.json({ error: "La duración no cabe en el horario diario de 09:00 a 21:00." }, { status: 409 });
@@ -48,7 +48,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
         name: update.name,
         description: update.description,
         duration_minutes: update.durationMinutes,
-        ...(endTime ? { end_time: endTime } : {}),
+        ...(endTime ? { start_time: currentStart, end_time: endTime } : {}),
+        ...(update.lat !== undefined ? { latitude: update.lat, longitude: update.lng } : {}),
         ...(update.blockType ? { block_type: update.blockType } : {}),
         ...(update.location !== undefined ? { location_label: update.location } : {}),
         ...(update.travelMinutes !== undefined ? { travel_minutes: update.travelMinutes } : {}),

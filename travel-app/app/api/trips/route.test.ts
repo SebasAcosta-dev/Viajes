@@ -12,7 +12,7 @@ vi.mock("@/app/lib/persistence/server", () => ({
   ),
 }));
 
-import { POST } from "@/app/api/trips/route";
+import { GET, POST } from "@/app/api/trips/route";
 
 const draft = {
   name: "Viaje a Marrakech",
@@ -155,6 +155,7 @@ describe("POST /api/trips", () => {
         })],
       }),
     });
+
   });
 
   it.each([
@@ -190,5 +191,45 @@ describe("POST /api/trips", () => {
     const body = await response.json();
     expect(response.status).toBe(502);
     expect(body.error).toContain("no confirmó todos los días");
+  });
+});
+
+describe("GET /api/trips", () => {
+  it("devuelve un resumen mínimo para Inicio sin leer itinerarios ni gastos", async () => {
+    const rows = [{
+      id: "trip-1",
+      name: "Marrakech",
+      destination: "Marrakech",
+      status: "planificado",
+      start_date: "2026-10-20",
+      end_date: "2026-10-23",
+      budget: 100,
+      currency: "EUR",
+    }];
+    const summaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: rows, error: null }),
+    };
+    const supabase = { from: vi.fn().mockReturnValue(summaryQuery) };
+    getAuthenticatedSupabaseMock.mockResolvedValue({ supabase, user: { id: "user-1" } });
+
+    const response = await GET(new Request("http://localhost/api/trips?summary=1"));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      trips: [{
+        id: "trip-1",
+        name: "Marrakech",
+        destination: "Marrakech",
+        status: "planificado",
+        startDate: "2026-10-20",
+        endDate: "2026-10-23",
+        budget: 100,
+        currency: "EUR",
+      }],
+    });
+    expect(summaryQuery.select).toHaveBeenCalledWith("id,name,destination,status,start_date,end_date,budget,currency");
+    expect(summaryQuery.limit).toHaveBeenCalledWith(50);
+    expect(supabase.from).toHaveBeenCalledWith("trips");
   });
 });

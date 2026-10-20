@@ -1,12 +1,13 @@
 "use client";
 
 import { defaultFavorites, seedTrips } from "@/app/data/demo-data";
-import type { FavoriteDestination, SavedExpense, SavedTrip, TripDraft } from "@/app/lib/persistence/types";
+import type { FavoriteDestination, SavedExpense, SavedTrip, SavedTripGroup, SavedTripSummary, TripDraft, TripUpdates } from "@/app/lib/persistence/types";
 import { getPersistenceMode } from "@/app/lib/persistence/mode";
-import type { ItineraryItem } from "@/app/lib/types";
+import type { ItineraryDay, ItineraryItem } from "@/app/lib/types";
 
 const TRIPS_KEY = "viajes.persisted.trips.v1";
 const FAVORITES_KEY = "viajes.persisted.favorites.v1";
+const TRIP_GROUPS_KEY = "viajes.persisted.trip-groups.v1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -95,6 +96,17 @@ export async function listTrips(): Promise<SavedTrip[]> {
   return demoTrips();
 }
 
+export async function listTripSummaries(): Promise<SavedTripSummary[]> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ trips?: unknown }>("/api/trips?summary=1");
+    if (!Array.isArray(result.trips)) throw new Error("El servidor no confirmó la lectura resumida de los viajes.");
+    return result.trips as SavedTripSummary[];
+  }
+  return (await listTrips()).slice(0, 50).map(({ id, name, destination, status, startDate, endDate, budget, currency }) => ({
+    id, name, destination, status, startDate, endDate, budget, currency,
+  }));
+}
+
 export async function saveTrip(draft: TripDraft): Promise<SavedTrip> {
   if (getPersistenceMode() === "supabase") {
     const result = await api<{ trip?: unknown }>("/api/trips", { method: "POST", body: JSON.stringify(draft) });
@@ -109,7 +121,7 @@ export async function saveTrip(draft: TripDraft): Promise<SavedTrip> {
   return trip;
 }
 
-export async function updateTrip(id: string, changes: Partial<Pick<SavedTrip, "budget" | "currency" | "status">>): Promise<void> {
+export async function updateTrip(id: string, changes: TripUpdates): Promise<void> {
   if (getPersistenceMode() === "supabase") {
     const result = await api<{ trip?: unknown }>(`/api/trips/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -118,7 +130,8 @@ export async function updateTrip(id: string, changes: Partial<Pick<SavedTrip, "b
     if (!isRecord(result.trip) || result.trip.id !== id ||
       (changes.budget !== undefined && result.trip.budget !== changes.budget) ||
       (changes.currency !== undefined && result.trip.currency !== changes.currency) ||
-      (changes.status !== undefined && result.trip.status !== changes.status)) {
+      (changes.status !== undefined && result.trip.status !== changes.status) ||
+      Object.entries(changes).some(([key, value]) => (result.trip as Record<string, unknown>)[key] !== value)) {
       throw new Error("El servidor no confirmó los cambios del viaje.");
     }
     return;
@@ -127,6 +140,12 @@ export async function updateTrip(id: string, changes: Partial<Pick<SavedTrip, "b
   const index = trips.findIndex((trip) => trip.id === id);
   if (index < 0) throw new Error("No se encontró el viaje.");
   trips[index] = { ...trips[index], ...changes, updatedAt: new Date().toISOString() };
+  if (changes.startDate !== undefined) {
+    trips[index].itinerary = trips[index].itinerary.map((day) => ({
+      ...day,
+      date: changes.startDate ? new Date(Date.parse(`${changes.startDate}T00:00:00Z`) + (day.dayNumber - 1) * 86_400_000).toISOString().slice(0, 10) : undefined,
+    }));
+  }
   localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
@@ -161,6 +180,48 @@ export async function updateActivity(tripId: string, activity: ItineraryItem): P
     }),
   }));
   if (!found) throw new Error("No se encontró la actividad.");
+  trip.updatedAt = new Date().toISOString();
+  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+}
+
+export async function reorderActivities(tripId: string, dayId: string, activityIds: string[]): Promise<void> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ reordered?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/days/${encodeURIComponent(dayId)}/activities/reorder`,
+      { method: "POST", body: JSON.stringify({ activityIds }) },
+    );
+    if (result.reordered !== true) throw new Error("El servidor no confirmó el nuevo orden de actividades.");
+    return;
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  const day = trip?.itinerary.find((entry) => entry.id === dayId);
+  if (!trip || !day || activityIds.length !== day.items.length
+    || new Set(activityIds).size !== activityIds.length
+    || activityIds.some((id) => !day.items.some((activity) => activity.id === id))) {
+    throw new Error("El orden de actividades no coincide con la jornada.");
+  }
+  const items = new Map(day.items.map((activity) => [activity.id, activity]));
+  day.items = activityIds.map((id, index) => ({ ...items.get(id)!, order: index + 1 }));
+  trip.updatedAt = new Date().toISOString();
+  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+}
+
+export async function replaceTripDay(tripId: string, dayNumber: number, day: ItineraryDay): Promise<void> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ updated?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/days/${dayNumber}/regenerate`,
+      { method: "POST", body: JSON.stringify({ day }) },
+    );
+    if (result.updated !== true) throw new Error("El servidor no confirmó la sustitución de la jornada.");
+    return;
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  if (!trip) throw new Error("No se encontró el viaje.");
+  const index = trip.itinerary.findIndex((entry) => entry.dayNumber === dayNumber);
+  if (index < 0 || day.dayNumber !== dayNumber) throw new Error("No se encontró la jornada que se va a sustituir.");
+  trip.itinerary[index] = day;
   trip.updatedAt = new Date().toISOString();
   localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
@@ -219,6 +280,84 @@ export async function addExpense(
   trip.updatedAt = new Date().toISOString();
   localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
   return result;
+}
+
+export async function updateExpense(
+  tripId: string,
+  expenseId: string,
+  expense: Pick<SavedExpense, "category" | "description" | "amount" | "currency" | "incurredOn" | "notes" | "activityId">,
+): Promise<void> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ expense?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/expenses/${encodeURIComponent(expenseId)}`,
+      { method: "PATCH", body: JSON.stringify(expense) },
+    );
+    if (!isRecord(result.expense) || result.expense.id !== expenseId || result.expense.tripId !== tripId) {
+      throw new Error("El servidor no confirmó los cambios del gasto.");
+    }
+    return;
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  const existing = trip?.expenses.find((entry) => entry.id === expenseId);
+  if (!trip || !existing) throw new Error("No se encontró el gasto.");
+  Object.assign(existing, expense);
+  trip.updatedAt = new Date().toISOString();
+  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+}
+
+export async function deleteExpense(tripId: string, expenseId: string): Promise<void> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ deleted?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/expenses/${encodeURIComponent(expenseId)}`,
+      { method: "DELETE" },
+    );
+    if (result.deleted !== true) throw new Error("El servidor no confirmó la eliminación del gasto.");
+    return;
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  if (!trip || !trip.expenses.some((entry) => entry.id === expenseId)) throw new Error("No se encontró el gasto.");
+  trip.expenses = trip.expenses.filter((entry) => entry.id !== expenseId);
+  trip.updatedAt = new Date().toISOString();
+  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+}
+
+export async function listTripGroups(): Promise<SavedTripGroup[]> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ groups?: unknown }>("/api/trip-groups");
+    if (!Array.isArray(result.groups)) throw new Error("El servidor no confirmó la lectura de los viajes combinados.");
+    return result.groups as SavedTripGroup[];
+  }
+  return readStored(TRIP_GROUPS_KEY, []);
+}
+
+export async function createTripGroup(
+  name: string,
+  items: SavedTripGroup["items"],
+): Promise<SavedTripGroup> {
+  if (getPersistenceMode() === "supabase") {
+    const result = await api<{ group?: unknown }>("/api/trip-groups", {
+      method: "POST",
+      body: JSON.stringify({ name, items }),
+    });
+    if (!isRecord(result.group) || typeof result.group.id !== "string") {
+      throw new Error("El servidor no confirmó la planificación combinada.");
+    }
+    return result.group as unknown as SavedTripGroup;
+  }
+  const trips = demoTrips();
+  if (items.some((item) => !trips.some((trip) => trip.id === item.tripId))) {
+    throw new Error("La planificación contiene un viaje que no está guardado localmente.");
+  }
+  const group: SavedTripGroup = {
+    id: newId(),
+    name: name.trim(),
+    items: items.map((item, index) => ({ ...item, sortOrder: index + 1 })),
+    createdAt: new Date().toISOString(),
+  };
+  localStorage.setItem(TRIP_GROUPS_KEY, JSON.stringify([group, ...await listTripGroups()]));
+  return group;
 }
 
 export function persistenceLabel(): string {

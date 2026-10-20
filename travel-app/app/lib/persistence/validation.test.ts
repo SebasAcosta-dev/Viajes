@@ -137,6 +137,14 @@ describe("validación de persistencia", () => {
       durationMinutes: 60,
       estimate: 0,
       priceStatus: "free_verified",
-    })).toBeUndefined();
+    })).toMatchObject({ estimate: 0, priceStatus: "free_verified" });
+    expect(validateActivityUpdate({
+      name: "Museo",
+      description: "",
+      durationMinutes: 60,
+      estimate: 25,
+      pricePerPerson: 25,
+      priceStatus: "verified",
+    })).toMatchObject({ priceStatus: "verified" });
   });
 });

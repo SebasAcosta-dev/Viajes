@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { TripsManager } from "@/app/components/trips-manager";
+import { CombinedTripPlanner } from "@/app/components/combined-trip-planner";
 
 export default function ViajesPage() {
   return (
@@ -9,9 +10,10 @@ export default function ViajesPage() {
           <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Viajes</p>
           <h1 className="text-3xl font-bold sm:text-4xl">Mis viajes</h1>
         </div>
-        <Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">Inicio</Link>
+        <Link href="/planificar" className="rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Crear viaje</Link>
       </div>
       <TripsManager view="trips" />
+      <CombinedTripPlanner />
     </main>
   );
 }

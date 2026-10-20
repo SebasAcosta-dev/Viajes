@@ -17,11 +17,45 @@ export async function getAuthenticatedSupabase() {
   } catch {
     throw new PersistenceRequestError("Supabase no está configurado en el servidor.", 503);
   }
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) {
-    throw new PersistenceRequestError("Inicia sesión para gestionar tus viajes.", 401);
+  const startedAt = performance.now();
+  let authResult = "unknown";
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) {
+      const invalidSession = error.name === "AuthSessionMissingError" || error.status === 401 || error.status === 403;
+      authResult = error.name === "AuthRetryableFetchError"
+        ? "network_error"
+        : invalidSession
+          ? "invalid_session"
+          : "auth_error";
+      throw new PersistenceRequestError(
+        invalidSession
+          ? "Inicia sesión para gestionar tus viajes."
+          : "No se pudo verificar la sesión con Supabase. Vuelve a intentarlo.",
+        invalidSession ? 401 : 503,
+      );
+    }
+    if (!data.user) {
+      authResult = "no_session";
+      throw new PersistenceRequestError("Inicia sesión para gestionar tus viajes.", 401);
+    }
+    authResult = "authenticated";
+    return { supabase, user: data.user };
+  } catch (error) {
+    if (error instanceof PersistenceRequestError) throw error;
+    authResult = error instanceof Error && error.name === "AuthRetryableFetchError"
+      ? "network_error"
+      : "thrown_error";
+    throw new PersistenceRequestError("No se pudo verificar la sesión con Supabase. Vuelve a intentarlo.", 503);
+  } finally {
+    if (process.env.NODE_ENV === "development") {
+      console.info("[supabase-auth-timing]", JSON.stringify({
+        durationMs: Math.round(performance.now() - startedAt),
+        routeKind: "private_api",
+        result: authResult,
+      }));
+    }
   }
-  return { supabase, user: data.user };
 }
 
 export function persistenceErrorResponse(error: unknown) {

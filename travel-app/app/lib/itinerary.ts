@@ -112,7 +112,7 @@ export function getTripBudgetSummary(trip: {
   currency: Currency;
   travelers: number;
   itinerary: ItineraryDay[];
-  expenses?: { amount: number; currency: Currency }[];
+  expenses?: { amount: number; currency: Currency; activityId?: string }[];
 }): {
   totalEstimated: number;
   avgPerPerson: number;
@@ -123,12 +123,18 @@ export function getTripBudgetSummary(trip: {
   unknownActivityPrices: number;
   projectionIncomplete: boolean;
 } {
+  const realizedActivityIds = new Set(
+    (trip.expenses ?? [])
+      .filter((expense) => expense.currency === trip.currency && expense.activityId)
+      .map((expense) => expense.activityId as string),
+  );
   const totalEstimated = trip.itinerary.reduce(
     (sum, day) => sum + day.items.reduce(
       (daySum, item) => daySum + (
         (item.blockType === undefined || item.blockType === "activity")
         && item.budgetCategory !== "gastronomy"
         && item.currency === trip.currency
+        && !realizedActivityIds.has(item.id)
         && item.priceStatus !== "unknown"
           ? item.estimate ?? 0
           : 0
@@ -141,6 +147,7 @@ export function getTripBudgetSummary(trip: {
     (item.blockType === undefined || item.blockType === "activity")
     &&
     item.budgetCategory !== "gastronomy"
+    && !realizedActivityIds.has(item.id)
     && (
       item.priceStatus === "unknown"
       || item.priceStatus !== "free_verified" && (item.estimate === undefined || item.estimate === 0)

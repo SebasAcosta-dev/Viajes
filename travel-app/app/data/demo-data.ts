@@ -360,13 +360,13 @@ export const defaultFavorites: FavoriteRecord[] = [
 ];
 
 export const defaultProfile: ProfilePreferences = {
-  name: "Sofía Gómez",
+  name: "",
   language: "es",
   currency: "EUR",
-  interests: ["Historia", "Parques naturales", "Gastronomía local"],
+  interests: [],
   pace: "equilibrado",
-  budgetPreference: "medio",
-  travelTypes: ["Cultural", "Naturaleza", "Relax"],
+  budgetPreference: "",
+  travelTypes: [],
 };
 
 export const seedTrips: TripRecord[] = [

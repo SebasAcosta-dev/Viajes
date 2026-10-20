@@ -36,9 +36,10 @@ function validActivity(value: unknown, travelers: number, tripInterests: string[
     && typeof value.durationMinutes === "number" && Number.isInteger(value.durationMinutes) && value.durationMinutes >= 1 && value.durationMinutes <= 1440
     && (estimate === undefined || (typeof estimate === "number" && Number.isFinite(estimate) && estimate >= 0))
     && (pricePerPerson === undefined || (typeof pricePerPerson === "number" && Number.isFinite(pricePerPerson) && pricePerPerson > 0))
-    && (priceStatus === undefined || priceStatus === "estimate" || priceStatus === "unknown")
+    && (priceStatus === undefined || priceStatus === "estimate" || priceStatus === "unknown" || priceStatus === "verified" || priceStatus === "free_verified")
     && (priceStatus !== "unknown" || ((estimate === undefined || estimate === 0) && pricePerPerson === undefined))
-    && (priceStatus !== "estimate" || (estimate !== undefined && estimate > 0) || pricePerPerson !== undefined)
+    && (priceStatus !== "estimate" && priceStatus !== "verified" || (estimate !== undefined && estimate > 0) || pricePerPerson !== undefined)
+    && (priceStatus !== "free_verified" || ((estimate === undefined || estimate === 0) && pricePerPerson === undefined))
     && (value.priceSource === undefined && value.priceCheckedAt === undefined)
     && (value.budgetCategory === undefined || value.budgetCategory === "activity" || value.budgetCategory === "gastronomy")
     && (interestTags === undefined || (Array.isArray(interestTags) && interestTags.length <= 200 && interestTags.every((tag) => typeof tag === "string" && tag.length <= 80 && tripInterests.includes(tag))))
@@ -133,6 +134,8 @@ export function validateExpense(value: unknown): {
   amount: number;
   currency: Currency;
   incurredOn: string;
+  notes?: string;
+  activityId?: string;
 } | undefined {
   if (!isRecord(value)) return undefined;
   if (
@@ -141,6 +144,8 @@ export function validateExpense(value: unknown): {
     || typeof value.amount !== "number" || !Number.isFinite(value.amount) || value.amount < 0
     || typeof value.currency !== "string" || !currencies.includes(value.currency as Currency)
     || !isDate(value.incurredOn)
+    || (value.notes !== undefined && (typeof value.notes !== "string" || value.notes.length > 1000))
+    || (value.activityId !== undefined && (typeof value.activityId !== "string" || value.activityId.length > 100))
   ) return undefined;
   return {
     category: value.category.trim(),
@@ -148,6 +153,8 @@ export function validateExpense(value: unknown): {
     amount: value.amount,
     currency: value.currency as Currency,
     incurredOn: value.incurredOn,
+    ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
+    ...(typeof value.activityId === "string" && value.activityId ? { activityId: value.activityId } : {}),
   };
 }
 
@@ -160,6 +167,9 @@ export function validateActivityUpdate(value: unknown): Partial<ItineraryItem> |
   const pricePerPerson = value.pricePerPerson;
   const priceStatus = value.priceStatus;
   const blockType = value.blockType;
+  const startTime = value.startTime;
+  const lat = value.lat;
+  const lng = value.lng;
   const location = value.location;
   const travelMinutes = value.travelMinutes;
   const reliability = value.reliability;
@@ -169,9 +179,14 @@ export function validateActivityUpdate(value: unknown): Partial<ItineraryItem> |
     || typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440
     || (estimate !== undefined && (typeof estimate !== "number" || !Number.isFinite(estimate) || estimate < 0))
     || (pricePerPerson !== undefined && (typeof pricePerPerson !== "number" || !Number.isFinite(pricePerPerson) || pricePerPerson <= 0))
-    || (priceStatus !== undefined && priceStatus !== "estimate" && priceStatus !== "unknown")
+    || (priceStatus !== undefined && priceStatus !== "estimate" && priceStatus !== "unknown" && priceStatus !== "verified" && priceStatus !== "free_verified")
     || (priceStatus === "unknown" && ((estimate !== undefined && estimate !== 0) || pricePerPerson !== undefined))
-    || (priceStatus === "estimate" && ((estimate === undefined || estimate <= 0) && pricePerPerson === undefined))
+    || ((priceStatus === "estimate" || priceStatus === "verified") && ((estimate === undefined || estimate <= 0) && pricePerPerson === undefined))
+    || (priceStatus === "free_verified" && ((estimate !== undefined && estimate !== 0) || pricePerPerson !== undefined))
+    || (startTime !== undefined && (typeof startTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)))
+    || (lat !== undefined && (typeof lat !== "number" || !Number.isFinite(lat) || lat < -90 || lat > 90))
+    || (lng !== undefined && (typeof lng !== "number" || !Number.isFinite(lng) || lng < -180 || lng > 180))
+    || ((lat === undefined) !== (lng === undefined))
     || (blockType !== undefined && !itineraryBlockTypes.includes(String(blockType)))
     || (location !== undefined && (typeof location !== "string" || location.length > 160))
     || (travelMinutes !== undefined && (typeof travelMinutes !== "number" || !Number.isInteger(travelMinutes) || travelMinutes < 0 || travelMinutes > 720))
@@ -181,9 +196,12 @@ export function validateActivityUpdate(value: unknown): Partial<ItineraryItem> |
     name,
     description,
     durationMinutes,
+    ...(typeof startTime === "string" ? { startTime } : {}),
+    ...(typeof lat === "number" ? { lat } : {}),
+    ...(typeof lng === "number" ? { lng } : {}),
     ...(typeof estimate === "number" ? { estimate } : {}),
     ...(typeof pricePerPerson === "number" ? { pricePerPerson } : {}),
-    ...(priceStatus === "estimate" || priceStatus === "unknown" ? { priceStatus } : {}),
+    ...(priceStatus === "estimate" || priceStatus === "unknown" || priceStatus === "verified" || priceStatus === "free_verified" ? { priceStatus } : {}),
     ...(blockType !== undefined ? { blockType: blockType as ItineraryItem["blockType"] } : {}),
     ...(typeof location === "string" ? { location } : {}),
     ...(typeof travelMinutes === "number" ? { travelMinutes } : {}),

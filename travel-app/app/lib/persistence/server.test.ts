@@ -19,11 +19,29 @@ describe("autorización Supabase", () => {
   it("rechaza solicitudes sin sesión autenticada", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
     mockCreateClient.mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "No session" } }) },
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { name: "AuthSessionMissingError" } }) },
     } as never);
 
     await expect(getAuthenticatedSupabase())
       .rejects.toMatchObject({ status: 401 });
+  });
+
+  it("falla cerrado con token expirado y clasifica la sesión como inválida", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    mockCreateClient.mockResolvedValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { name: "AuthApiError", status: 401 } }) },
+    } as never);
+
+    await expect(getAuthenticatedSupabase()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("no concede acceso cuando Supabase Auth no responde", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    mockCreateClient.mockResolvedValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { name: "AuthRetryableFetchError", status: undefined } }) },
+    } as never);
+
+    await expect(getAuthenticatedSupabase()).rejects.toMatchObject({ status: 503 });
   });
 
   it("requiere que la persistencia Supabase esté explícitamente habilitada", async () => {
@@ -63,5 +81,22 @@ describe("autorización Supabase", () => {
     }
     expect(metadataMigration).toContain("create or replace function public.create_trip_with_itinerary");
     expect(metadataMigration).not.toMatch(/drop table|disable row level security/i);
+  });
+
+  it("solo reasocia gastos a actividades con nombre único en el viaje y jornada reemplazados", () => {
+    const migration = readFileSync(resolve(process.cwd(), "supabase", "migrations", "20261020000400_trip_management.sql"), "utf8");
+    const functionStart = migration.indexOf("create or replace function public.replace_trip_day");
+    const functionEnd = migration.indexOf("\nrevoke all on function public.update_trip_details", functionStart);
+    const replaceDay = migration.slice(functionStart, functionEnd);
+
+    expect(replaceDay).toContain("'old_activity_count'");
+    expect(replaceDay).toContain("same_name.trip_id = p_trip_id");
+    expect(replaceDay).toContain("same_name.day_id = current_day_id");
+    expect(replaceDay).toContain("new_activity_name_count = 1");
+    expect(replaceDay).toContain("(old_activity.value ->> 'old_activity_count')::integer = 1");
+    expect(replaceDay).toContain("expense.trip_id = p_trip_id");
+    expect(replaceDay).toContain("expense.user_id = auth.uid()");
+    expect(replaceDay).toContain("expense.activity_id is null");
+    expect(replaceDay).not.toMatch(/delete\s+from\s+public\.expenses/i);
   });
 });
