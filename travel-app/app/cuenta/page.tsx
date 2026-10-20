@@ -7,12 +7,30 @@ import { getPersistenceMode } from "@/app/lib/persistence/mode";
 import { FavoriteDestinations } from "@/app/components/favorite-destinations";
 import { ProfilePreferencesForm } from "@/app/components/profile-preferences-form";
 
+type AuthAction = "signin" | "signup";
+type AuthFormState = {
+  email: string;
+  password: string;
+  message: string;
+  error: string;
+  loading: boolean;
+};
+
+const emptyAuthForm: AuthFormState = {
+  email: "",
+  password: "",
+  message: "",
+  error: "",
+  loading: false,
+};
+
 export default function AccountPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [authForms, setAuthForms] = useState<Record<AuthAction, AuthFormState>>({
+    signin: { ...emptyAuthForm },
+    signup: { ...emptyAuthForm },
+  });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
   const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
@@ -31,25 +49,35 @@ export default function AccountPage() {
     return () => listener.subscription.unsubscribe();
   }, [supabaseConfigured, supabaseMode]);
 
-  const handleAuth = async (event: FormEvent<HTMLFormElement>, action: "signin" | "signup") => {
+  const updateAuthForm = (action: AuthAction, updates: Partial<AuthFormState>) => {
+    setAuthForms((current) => ({
+      ...current,
+      [action]: { ...current[action], ...updates },
+    }));
+  };
+
+  const handleAuth = async (event: FormEvent<HTMLFormElement>, action: AuthAction) => {
     event.preventDefault();
+    const credentials = authForms[action];
+    updateAuthForm(action, { error: "", message: "", loading: true });
     setError("");
     setMessage("");
-    setLoading(true);
     try {
       const supabase = createSupabaseBrowserClient();
       const result = action === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+        ? await supabase.auth.signInWithPassword({ email: credentials.email, password: credentials.password })
+        : await supabase.auth.signUp({ email: credentials.email, password: credentials.password });
       if (result.error) throw result.error;
       setSignedInEmail(result.data.user?.email ?? null);
-      setMessage(action === "signup" && !result.data.session
+      updateAuthForm(action, { message: action === "signup" && !result.data.session
         ? "Cuenta creada. Confirma el correo y vuelve para iniciar sesión."
-        : "Sesión iniciada. Tus datos privados se guardarán en Supabase.");
+        : "Sesión iniciada. Tus datos privados se guardarán en Supabase." });
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "No se pudo completar la autenticación.");
+      updateAuthForm(action, {
+        error: authError instanceof Error ? authError.message : "No se pudo completar la autenticación.",
+      });
     } finally {
-      setLoading(false);
+      updateAuthForm(action, { loading: false });
     }
   };
 
@@ -97,13 +125,15 @@ export default function AccountPage() {
               <form key={action} onSubmit={(event) => void handleAuth(event, action)} className="space-y-3">
                 <h2 className="font-semibold">{action === "signin" ? "Iniciar sesión" : "Crear cuenta"}</h2>
                 <label className="block text-sm">Correo
-                  <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+                  <input type="email" required autoComplete={action === "signin" ? "username" : "email"} value={authForms[action].email} onChange={(event) => updateAuthForm(action, { email: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
                 </label>
                 <label className="block text-sm">Contraseña
-                  <input type="password" required minLength={8} autoComplete={action === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
+                  <input type="password" required minLength={8} autoComplete={action === "signin" ? "current-password" : "new-password"} value={authForms[action].password} onChange={(event) => updateAuthForm(action, { password: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" />
                 </label>
-                <button disabled={loading} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                  {loading ? "Procesando..." : action === "signin" ? "Entrar" : "Registrarme"}
+                {authForms[action].message && <p className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{authForms[action].message}</p>}
+                {authForms[action].error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">{authForms[action].error}</p>}
+                <button disabled={authForms[action].loading} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {authForms[action].loading ? "Procesando..." : action === "signin" ? "Entrar" : "Registrarme"}
                 </button>
               </form>
             ))}
