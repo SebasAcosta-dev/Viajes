@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { addIsoDays, formatIsoDate } from "@/app/lib/date-format";
 import { createTripGroup, listTrips, listTripGroups } from "@/app/lib/persistence/client";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 import { getTripBudgetSummary } from "@/app/lib/itinerary";
 import type { SavedTrip, SavedTripGroup, TripGroupItem } from "@/app/lib/persistence/types";
 
@@ -54,6 +55,7 @@ export function CombinedTripPlanner() {
   const refresh = useCallback(async () => {
     setError("");
     try {
+      await getPlannerDraftScope();
       const [savedTrips, savedGroups] = await Promise.all([listTrips(), listTripGroups()]);
       setTrips(savedTrips);
       setGroups(savedGroups);

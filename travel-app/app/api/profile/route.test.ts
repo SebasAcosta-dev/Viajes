@@ -83,12 +83,42 @@ describe("API de preferencias del perfil", () => {
 
     expect(response.status).toBe(200);
     expect(query.update).toHaveBeenCalledWith(expect.objectContaining({
+      display_name: "Ana",
       currency: "USD",
       preferences: expect.objectContaining({ legacy: "preserved", interests: ["Fútbol"] }),
     }));
     expect(query.eq).toHaveBeenNthCalledWith(1, "id", user.id);
     expect(query.eq).toHaveBeenNthCalledWith(2, "id", user.id);
     expect(body.preferences.interests).toEqual(["Fútbol"]);
+  });
+
+  it("recupera las preferencias persistidas en la siguiente lectura", async () => {
+    const savedRow = {
+      ...updatedRow,
+      display_name: "Ana actualizada",
+    };
+    const { query } = mockSupabase([currentRow, savedRow, savedRow]);
+    const writeResponse = await PUT(new Request("http://localhost/api/profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ana actualizada",
+        language: "es",
+        currency: "USD",
+        interests: ["Fútbol"],
+        pace: "equilibrado",
+        budgetPreference: "",
+        travelTypes: ["Cultural"],
+      }),
+    }));
+    const readResponse = await GET();
+
+    expect(writeResponse.status).toBe(200);
+    expect(readResponse.status).toBe(200);
+    await expect(readResponse.json()).resolves.toMatchObject({
+      preferences: { name: "Ana actualizada", currency: "USD", interests: ["Fútbol"] },
+    });
+    expect(query.eq).toHaveBeenCalledWith("id", user.id);
   });
 
   it("rechaza preferencias inválidas sin escribir en Supabase", async () => {

@@ -23,7 +23,7 @@ export async function GET() {
     if (!data) return Response.json({ error: "No se encontró el perfil de esta cuenta." }, { status: 404 });
     return Response.json({ preferences: mapPreferences(data) });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "profile.read");
   }
 }
 
@@ -44,6 +44,7 @@ export async function PUT(request: Request) {
     const { data, error } = await supabase
       .from("profiles")
       .update({
+        display_name: preferences.name,
         preferences: {
           ...existingPreferences,
           interests: preferences.interests,
@@ -61,6 +62,6 @@ export async function PUT(request: Request) {
     if (!data) return Response.json({ error: "No se encontró el perfil de esta cuenta." }, { status: 404 });
     return Response.json({ preferences: mapPreferences(data) });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "profile.update");
   }
 }

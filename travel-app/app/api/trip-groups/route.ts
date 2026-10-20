@@ -29,10 +29,11 @@ function mapGroup(row: Record<string, unknown>) {
 
 export async function GET() {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { data, error } = await supabase
       .from("trip_groups")
       .select("id,name,created_at,trip_group_items(trip_id,sort_order,starts_on,ends_on)")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
     if (error?.code === "42P01" || error?.code === "PGRST205") {
       return Response.json({ error: "Los viajes combinados requieren aplicar la migración 20261020000400_trip_management.sql." }, { status: 503 });
@@ -40,13 +41,13 @@ export async function GET() {
     if (error) throw error;
     return Response.json({ groups: (data ?? []).map((row) => mapGroup(row as Record<string, unknown>)) });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trip_groups.read");
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const body: unknown = await request.json().catch(() => null);
     if (!isRecord(body) || typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 160
       || !Array.isArray(body.items) || body.items.length < 1 || body.items.length > 12) {
@@ -77,11 +78,12 @@ export async function POST(request: Request) {
       .from("trip_groups")
       .select("id,name,created_at,trip_group_items(trip_id,sort_order,starts_on,ends_on)")
       .eq("id", result.data)
+      .eq("user_id", user.id)
       .maybeSingle();
     if (error) throw error;
     if (!data) throw new Error("El servidor no pudo leer la planificación combinada creada.");
     return Response.json({ group: mapGroup(data as Record<string, unknown>) }, { status: 201 });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trip_groups.create");
   }
 }

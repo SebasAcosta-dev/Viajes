@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { addExpense, deleteExpense, deleteTrip, listTrips, persistenceLabel, reorderActivities, replaceTripDay, saveTrip, updateActivity, updateExpense, updateTrip } from "@/app/lib/persistence/client";
 import { calculateScheduledEnd, getBlockTypeLabel } from "@/app/lib/itinerary-schedule";
 import { addIsoDays, formatIsoDate } from "@/app/lib/date-format";
@@ -9,6 +9,8 @@ import { getTripBudgetSummary } from "@/app/lib/itinerary";
 import { TripCalendar } from "@/app/components/trip-calendar";
 import type { SavedExpense, SavedTrip } from "@/app/lib/persistence/types";
 import type { Currency, ItineraryDay, TripStatus } from "@/app/lib/types";
+import { useLocalToday } from "@/app/hooks/use-local-today";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 
 type View = "trips" | "budget";
 type TripEditDraft = {
@@ -25,15 +27,6 @@ type TripEditDraft = {
 type TripFilter = "all" | "future" | "active" | "completed" | "drafts";
 type TripSort = "startDate" | "destination" | "status" | "budget";
 
-function localToday(): string {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function subscribeToDateChanges(): () => void {
-  return () => {};
-}
-
 function money(amount: number, currency: Currency): string {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(amount);
 }
@@ -48,6 +41,20 @@ function priceStatusLabel(status: SavedTrip["itinerary"][number]["items"][number
 function dayDateLabel(day: SavedTrip["itinerary"][number], startDate: string | null): string {
   const date = day.date ?? (startDate ? addIsoDays(startDate, day.dayNumber - 1) : undefined);
   return date ? ` · ${formatIsoDate(date)}` : "";
+}
+
+function tripDateMinimum(
+  trip: SavedTrip,
+  draft: TripEditDraft | undefined,
+  key: "startDate" | "endDate",
+  today: string,
+): string {
+  const currentDate = key === "startDate" ? trip.startDate : trip.endDate;
+  const draftDate = key === "startDate" ? draft?.startDate : draft?.endDate;
+  if (currentDate && currentDate < today && draftDate === currentDate) return currentDate;
+  if (key === "startDate") return today;
+  const draftStart = draft?.startDate ?? "";
+  return draftStart > today ? draftStart : today;
 }
 
 function ActivityForm({
@@ -450,7 +457,7 @@ function RegenerateDayControl({ trip, day, onSaved, onError }: {
 }
 
 export function TripsManager({ view }: { view: View }) {
-  const today = useSyncExternalStore(subscribeToDateChanges, localToday, () => "1970-01-01");
+  const today = useLocalToday();
   const [trips, setTrips] = useState<SavedTrip[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -468,6 +475,7 @@ export function TripsManager({ view }: { view: View }) {
   const refresh = useCallback(async (): Promise<boolean> => {
     setError("");
     try {
+      await getPlannerDraftScope();
       const result = await listTrips();
       setTrips(result);
       setBudgetDrafts(Object.fromEntries(result.map((trip) => [trip.id, String(trip.budget)])));
@@ -541,6 +549,31 @@ export function TripsManager({ view }: { view: View }) {
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "No se pudo actualizar el viaje.");
     }
+  };
+
+  const updateTripDateDraft = (trip: SavedTrip, key: "startDate" | "endDate", value: string) => {
+    const current = tripDrafts[trip.id] ?? {
+      name: trip.name,
+      origin: trip.origin,
+      destination: trip.destination,
+      startDate: trip.startDate ?? "",
+      endDate: trip.endDate ?? "",
+      travelers: String(trip.travelers),
+      budget: String(trip.budget),
+      currency: trip.currency,
+      status: trip.status,
+    };
+    const nextValue = value && value < today ? today : value;
+    const startDate = key === "startDate" ? nextValue : current.startDate;
+    const endDate = key === "endDate" ? nextValue : current.endDate;
+    setTripDrafts((drafts) => ({
+      ...drafts,
+      [trip.id]: {
+        ...current,
+        startDate,
+        endDate: startDate && endDate && endDate < startDate ? startDate : endDate,
+      },
+    }));
   };
 
   const duplicateTrip = async (trip: SavedTrip) => {
@@ -737,9 +770,16 @@ export function TripsManager({ view }: { view: View }) {
                 ["budget", "Presupuesto inicial", "number"],
               ] as const).map(([key, label, type]) => (
                 <label key={key} className="text-sm font-medium text-slate-700">{label}
-                  <input type={type} min={type === "number" ? (key === "travelers" ? 1 : 0) : undefined} max={key === "travelers" ? 100 : undefined}
+                  <input type={type}
+                    min={type === "number" ? (key === "travelers" ? 1 : 0)
+                      : key === "startDate" || key === "endDate"
+                        ? tripDateMinimum(trip, tripDrafts[trip.id], key, today)
+                        : undefined}
+                    max={key === "travelers" ? 100 : undefined}
                     step={key === "budget" ? "0.01" : "1"} required={key !== "origin"} value={tripDrafts[trip.id]?.[key] ?? ""}
-                    onChange={(event) => setTripDrafts({ ...tripDrafts, [trip.id]: { ...tripDrafts[trip.id], [key]: event.target.value } })}
+                    onChange={(event) => key === "startDate" || key === "endDate"
+                      ? updateTripDateDraft(trip, key, event.target.value)
+                      : setTripDrafts((drafts) => ({ ...drafts, [trip.id]: { ...drafts[trip.id], [key]: event.target.value } }))}
                     className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 text-sm" />
                 </label>
               ))}

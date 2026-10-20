@@ -1,5 +1,6 @@
 import { persistenceErrorResponse, getAuthenticatedSupabase } from "@/app/lib/persistence/server";
 import type { Currency, TripStatus } from "@/app/lib/types";
+import { requestTodayIso } from "@/app/lib/trip-dates";
 
 const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
 const statuses: TripStatus[] = ["borrador", "planificado", "activo", "completado"];
@@ -13,7 +14,7 @@ function validDate(value: unknown): value is string | null {
 
 export async function PATCH(request: Request, context: { params: Promise<{ tripId: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId } = await context.params;
     const body: unknown = await request.json().catch(() => null);
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -50,9 +51,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
         .from("trips")
         .select("start_date,end_date,trip_days(day_number)")
         .eq("id", tripId)
+        .eq("user_id", user.id)
         .maybeSingle();
       if (currentError) throw currentError;
       if (!existing) return Response.json({ error: "No se encontró el viaje o no tienes permiso para modificarlo." }, { status: 404 });
+      const today = requestTodayIso(request);
+      if (input.startDate !== undefined && input.startDate !== existing.start_date
+        && typeof input.startDate === "string" && input.startDate < today) {
+        return Response.json({ error: "La fecha de salida modificada no puede ser anterior al día actual." }, { status: 400 });
+      }
+      if (input.endDate !== undefined && input.endDate !== existing.end_date
+        && typeof input.endDate === "string" && input.endDate < today) {
+        return Response.json({ error: "La fecha de regreso modificada no puede ser anterior al día actual." }, { status: 400 });
+      }
       const start = input.startDate === undefined ? existing.start_date : input.startDate;
       const end = input.endDate === undefined ? existing.end_date : input.endDate;
       if (typeof start === "string" && typeof end === "string" && end < start) {
@@ -105,12 +116,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
         const selected = await supabase.from("trips")
           .select("id,name,origin,destination,start_date,end_date,travelers,budget,currency,status")
           .eq("id", tripId)
+          .eq("user_id", user.id)
           .maybeSingle();
         data = selected.data;
         error = selected.error;
       }
     } else {
       const result = await supabase.from("trips").update(updates).eq("id", tripId)
+        .eq("user_id", user.id)
         .select("id,name,origin,destination,start_date,end_date,travelers,budget,currency,status").maybeSingle();
       data = result.data;
       error = result.error;
@@ -130,19 +143,23 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
       status: data.status,
     } });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trips.update");
   }
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ tripId: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId } = await context.params;
-    const { data, error } = await supabase.from("trips").delete().eq("id", tripId).select("id").maybeSingle();
+    const { data, error } = await supabase.from("trips").delete()
+      .eq("id", tripId)
+      .eq("user_id", user.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
     if (!data) return Response.json({ error: "No se encontró el viaje o no tienes permiso para eliminarlo." }, { status: 404 });
     return Response.json({ deleted: true });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trips.delete");
   }
 }

@@ -2,6 +2,7 @@ import { persistenceErrorResponse, getAuthenticatedSupabase } from "@/app/lib/pe
 import { validateTripDraft } from "@/app/lib/persistence/validation";
 import type { SavedExpense, SavedTrip, TripDraft } from "@/app/lib/persistence/types";
 import type { Currency, ItineraryDay, ItineraryItem, TripStatus, TravelType } from "@/app/lib/types";
+import { normalizeNewTripDates, requestTodayIso } from "@/app/lib/trip-dates";
 
 function mapExpense(row: Record<string, unknown>): SavedExpense {
   return {
@@ -151,11 +152,12 @@ function missingMetadataMigration(error: { code?: string; message?: string; deta
 
 export async function GET(request: Request) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     if (new URL(request.url).searchParams.get("summary") === "1") {
       const { data, error } = await supabase
         .from("trips")
         .select("id,name,destination,status,start_date,end_date,budget,currency")
+        .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -171,20 +173,23 @@ export async function GET(request: Request) {
       }));
       return Response.json({ trips });
     }
-    const { data, error } = await supabase.from("trips").select(tripSelect).order("updated_at", { ascending: false });
+    const { data, error } = await supabase.from("trips").select(tripSelect)
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false });
     if (error) throw error;
     return Response.json({ trips: (data ?? []).map((row) => mapTrip(row as Record<string, unknown>)) });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trips.read");
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const body: unknown = await request.json().catch(() => null);
-    const draft = validateTripDraft(body);
-    if (!draft) return Response.json({ error: "Los datos del viaje o itinerario no son válidos." }, { status: 400 });
+    const parsedDraft = validateTripDraft(body);
+    if (!parsedDraft) return Response.json({ error: "Los datos del viaje o itinerario no son válidos." }, { status: 400 });
+    const draft = normalizeNewTripDates(parsedDraft, requestTodayIso(request));
     const requiresScheduleColumns = draft.itinerary.some((day) => day.items.some((item) =>
       item.blockType !== undefined || item.location !== undefined || item.travelMinutes !== undefined || item.reliability !== undefined,
     ));
@@ -197,7 +202,10 @@ export async function POST(request: Request) {
     if (schemaError) {
       const migrationError = missingMetadataMigration(schemaError);
       if (migrationError) return Response.json({ error: migrationError }, { status: 503 });
-      console.error("Trip metadata schema check failed", { code: schemaError.code ?? "unknown" });
+      console.error("Trip metadata schema check failed", {
+        code: schemaError.code ?? "unknown",
+        message: schemaError.message.slice(0, 200),
+      });
       throw schemaError;
     }
 
@@ -210,25 +218,24 @@ export async function POST(request: Request) {
           error: "La función de guardado no está disponible. Aplica las migraciones 20261020000200_itinerary_activity_metadata.sql y 20261020000300_itinerary_schedule.sql en ese orden y actualiza el esquema de Supabase.",
         }, { status: 503 });
       }
-      console.error("Trip creation failed", { code: createError.code ?? "unknown" });
       throw createError;
     }
     if (typeof tripId !== "string" || !tripId) {
-      console.error("Trip creation returned no id");
       return Response.json({ error: "Supabase no confirmó la creación del viaje." }, { status: 502 });
     }
-    const { data, error } = await supabase.from("trips").select(tripSelect).eq("id", tripId).single();
+    const { data, error } = await supabase.from("trips").select(tripSelect)
+      .eq("id", tripId)
+      .eq("user_id", user.id)
+      .single();
     if (error) {
-      console.error("Saved trip read-back failed", { code: error.code ?? "unknown" });
       throw error;
     }
     const savedTrip = mapTrip(data as Record<string, unknown>);
     if (!persistedItineraryMatchesDraft(savedTrip, draft)) {
-      console.error("Saved trip did not match submitted itinerary", { tripId });
       return Response.json({ error: "Supabase no confirmó todos los días, actividades y horarios del itinerario." }, { status: 502 });
     }
     return Response.json({ trip: savedTrip }, { status: 201 });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trips.create");
   }
 }

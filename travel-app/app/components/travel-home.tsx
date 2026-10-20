@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { InterestPicker } from "@/app/components/interest-picker";
 import { defaultProfile, destinations } from "@/app/data/demo-data";
 import { generateItineraryFromTrip } from "@/app/lib/itinerary";
@@ -13,6 +13,8 @@ import { listFavorites, listTripSummaries, persistenceLabel, toggleFavorite as p
 import { allTravelInterests, resolveTripInterests } from "@/app/lib/interest-catalog";
 import { loadGeneratedItinerary, loadTripFormDraft, saveGeneratedItinerary, saveTripFormDraft } from "@/app/lib/generated-itinerary";
 import { formatTripPeriod } from "@/app/lib/date-format";
+import { localTodayIso, normalizeNewDateRange } from "@/app/lib/trip-dates";
+import { useLocalToday } from "@/app/hooks/use-local-today";
 import type { FavoriteDestination, SavedTripSummary } from "@/app/lib/persistence/types";
 import type { Destination, ProfilePreferences, TripFormValues } from "@/app/lib/types";
 
@@ -30,18 +32,14 @@ const defaultForm: TripFormValues = {
   notes: "Quiero una mezcla de historia, gastronomía y paseo por la ciudad.",
 };
 
-function todayIso(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function subscribeToDateChanges(): () => void {
-  return () => {};
+function updateNewTripDates(form: TripFormValues, startDate: string, endDate: string, today: string): TripFormValues {
+  const dates = normalizeNewDateRange(startDate, endDate, today);
+  return { ...form, ...dates };
 }
 
 export function TravelHome() {
   const router = useRouter();
-  const today = useSyncExternalStore(subscribeToDateChanges, todayIso, () => "1970-01-01");
+  const today = useLocalToday();
   const [form, setForm] = useState<TripFormValues>(defaultForm);
   const [customInterests, setCustomInterests] = useState<string[]>([]);
   const [interestSelectionTouched, setInterestSelectionTouched] = useState(false);
@@ -60,9 +58,6 @@ export function TravelHome() {
 
   useEffect(() => {
     let active = true;
-    const profilePromise: Promise<{ profile: ProfilePreferences } | { error: unknown }> = getProfilePreferences()
-      .then((savedProfile) => ({ profile: savedProfile }))
-      .catch((error: unknown) => ({ error }));
     void getPlannerDraftScope()
       .then(async (scope) => {
         if (!active) return;
@@ -71,15 +66,23 @@ export function TravelHome() {
         const savedForm = loadTripFormDraft(scope);
         hasSavedFormRef.current = savedForm !== null;
         if (savedForm) {
-          setForm(savedForm);
-          if (scope === "anonymous") {
+          setForm((current) => {
+            const dates = normalizeNewDateRange(savedForm.startDate, savedForm.endDate, localTodayIso());
+            return { ...current, ...savedForm, ...dates };
+          });
+          if (scope === "anonymous" || scope.startsWith("anonymous:")) {
             setCustomInterests(savedForm.interests.filter((interest) => !(allTravelInterests as readonly string[]).includes(interest)));
             interestSelectionTouchedRef.current = true;
             setInterestSelectionTouched(true);
           }
         }
-        const profileResult = await profilePromise;
+        const [profileResult, tripData] = await Promise.all([
+          getProfilePreferences().then((savedProfile) => ({ profile: savedProfile })).catch((error: unknown) => ({ error })),
+          Promise.all([listFavorites(), listTripSummaries()]),
+        ]);
         if (!active) return;
+        setFavorites(tripData[0]);
+        setSavedTrips(tripData[1]);
         if ("error" in profileResult) {
           if (profileResult.error instanceof Error && !profileResult.error.message.includes("Inicia sesión")) {
             setPersistenceError(profileResult.error.message);
@@ -88,7 +91,7 @@ export function TravelHome() {
         }
         const savedProfile = profileResult.profile;
         setProfile(savedProfile);
-        if (!interestSelectionTouchedRef.current && (!hasSavedFormRef.current || scope !== "anonymous")) {
+        if (!interestSelectionTouchedRef.current && (!hasSavedFormRef.current || (scope !== "anonymous" && !scope.startsWith("anonymous:")))) {
           setCustomInterests(savedProfile.interests.filter((interest) => !(allTravelInterests as readonly string[]).includes(interest)));
           setForm((current) => ({
             ...current,
@@ -100,24 +103,20 @@ export function TravelHome() {
       .catch((error: unknown) => {
         if (active) setPersistenceError(error instanceof Error ? error.message : "No se pudo recuperar el borrador local.");
       });
-    void Promise.all([listFavorites(), listTripSummaries()])
-      .then(([savedFavorites, trips]) => {
-        if (!active) return;
-        setFavorites(savedFavorites);
-        setSavedTrips(trips);
-      })
-      .catch((error: unknown) => {
-        if (active) setPersistenceError(error instanceof Error ? error.message : "No se pudieron cargar los datos guardados.");
-      });
     return () => { active = false; };
   }, []);
+
+  const effectiveForm = useMemo(() => ({
+    ...form,
+    ...normalizeNewDateRange(form.startDate, form.endDate, today),
+  }), [form, today]);
 
   useEffect(() => {
     if (!draftScope) return;
     void Promise.resolve()
-      .then(() => saveTripFormDraft({ ...form, interests: resolveTripInterests(form.interests, [], customInterests) }, draftScope))
+      .then(() => saveTripFormDraft({ ...effectiveForm, interests: resolveTripInterests(effectiveForm.interests, [], customInterests) }, draftScope))
       .catch((error: unknown) => setPersistenceError(error instanceof Error ? error.message : "No se pudo guardar el borrador del formulario."));
-  }, [form, customInterests, draftScope]);
+  }, [effectiveForm, customInterests, draftScope]);
 
   const filteredDestinations = useMemo(() => {
     return destinations.filter((destination) =>
@@ -129,10 +128,10 @@ export function TravelHome() {
 
   const itineraryPreview = useMemo(() => {
     const interests = interestSelectionTouched
-      ? resolveTripInterests(form.interests, [], customInterests)
+      ? resolveTripInterests(effectiveForm.interests, [], customInterests)
       : profile.interests;
-    return generateItineraryFromTrip(selectedDestination, { ...form, interests });
-  }, [selectedDestination, form, profile.interests, interestSelectionTouched, customInterests]);
+    return generateItineraryFromTrip(selectedDestination, { ...effectiveForm, interests });
+  }, [selectedDestination, effectiveForm, profile.interests, interestSelectionTouched, customInterests]);
   const upcomingTrips = useMemo(() => {
     return savedTrips
       .filter((trip) => trip.startDate && (!trip.endDate || trip.endDate >= today))
@@ -151,34 +150,37 @@ export function TravelHome() {
     if (isGenerating || !draftScope) return;
     setGenerationError("");
     const interests = interestSelectionTouched
-      ? resolveTripInterests(form.interests, [], customInterests)
+      ? resolveTripInterests(effectiveForm.interests, [], customInterests)
       : profile.interests;
-    const requestForm = { ...form, interests };
+    const requestForm = { ...effectiveForm, interests };
     const validationErrors = validateTripForm(requestForm);
     setErrors(validationErrors);
     if (validationErrors.length) return;
     setIsGenerating(true);
     try {
       const durationDays = Math.floor(
-        (Date.parse(`${form.endDate}T00:00:00Z`) - Date.parse(`${form.startDate}T00:00:00Z`)) / 86_400_000,
+        (Date.parse(`${requestForm.endDate}T00:00:00Z`) - Date.parse(`${requestForm.startDate}T00:00:00Z`)) / 86_400_000,
       ) + 1;
       const response = await fetch("/api/assistant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Time-Zone": Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        },
         body: JSON.stringify({
-          message: `Organiza un itinerario de ${durationDays} días para ${form.destination}, priorizando estos intereses: ${interests.join(", ")}. ${form.notes}`.trim(),
+          message: `Organiza un itinerario de ${durationDays} días para ${requestForm.destination}, priorizando estos intereses: ${interests.join(", ")}. ${requestForm.notes}`.trim(),
           context: {
-            origin: form.origin,
-            destination: form.destination,
-            startDate: form.startDate,
-            endDate: form.endDate,
-            travelers: form.travelers,
+            origin: requestForm.origin,
+            destination: requestForm.destination,
+            startDate: requestForm.startDate,
+            endDate: requestForm.endDate,
+            travelers: requestForm.travelers,
             interests,
-            budget: form.budget,
-            currency: form.currency,
-            travelType: form.travelType,
-            pace: form.pace,
-            notes: form.notes,
+            budget: requestForm.budget,
+            currency: requestForm.currency,
+            travelType: requestForm.travelType,
+            pace: requestForm.pace,
+            notes: requestForm.notes,
           },
         }),
       });
@@ -197,17 +199,17 @@ export function TravelHome() {
         : undefined;
       const source = data.source === "openrouter" ? "openrouter" : "demo";
       if (!itinerary && source === "demo") {
-        const destination = destinations.find((entry) => entry.name.toLocaleLowerCase("es") === form.destination.toLocaleLowerCase("es"));
+        const destination = destinations.find((entry) => entry.name.toLocaleLowerCase("es") === requestForm.destination.toLocaleLowerCase("es"));
         if (destination) {
           const scheduledDays = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
           if (!scheduledDays) throw new Error("Las actividades de demostración no caben en un horario de 09:00 a 21:00.");
           itinerary = {
             destination: destination.name,
             durationDays,
-            startDate: form.startDate,
-            endDate: form.endDate,
-            travelers: form.travelers,
-            budget: { total: form.budget, currency: form.currency, status: "provided" },
+            startDate: requestForm.startDate,
+            endDate: requestForm.endDate,
+            travelers: requestForm.travelers,
+            budget: { total: requestForm.budget, currency: requestForm.currency, status: "provided" },
             days: scheduledDays,
           };
         }
@@ -377,11 +379,11 @@ export function TravelHome() {
               </label>
               <label className="text-sm font-medium text-slate-700">
                 Fecha de salida
-                <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+                <input type="date" min={today} value={effectiveForm.startDate} onChange={(e) => setForm((current) => updateNewTripDates(current, e.target.value, current.endDate, today))} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
               </label>
               <label className="text-sm font-medium text-slate-700">
                 Fecha de regreso
-                <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+                <input type="date" min={effectiveForm.startDate || today} value={effectiveForm.endDate} onChange={(e) => setForm((current) => updateNewTripDates(current, current.startDate, e.target.value, today))} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
               </label>
               <label className="text-sm font-medium text-slate-700">
                 Viajeros

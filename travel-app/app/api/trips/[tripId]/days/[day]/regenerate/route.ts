@@ -8,7 +8,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(request: Request, context: { params: Promise<{ tripId: string; day: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId, day: rawDayNumber } = await context.params;
     const dayNumber = Number(rawDayNumber);
     if (!Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 30) {
@@ -22,6 +22,7 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
     const { data: trip, error: tripError } = await supabase.from("trips")
       .select("name,origin,destination,start_date,end_date,travelers,budget,currency,interests,travel_type,status")
       .eq("id", tripId)
+      .eq("user_id", user.id)
       .maybeSingle();
     if (tripError) throw tripError;
     if (!trip) return Response.json({ error: "No se encontró el viaje o no tienes permiso para modificarlo." }, { status: 404 });
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
       .select("date")
       .eq("trip_id", tripId)
       .eq("day_number", dayNumber)
+      .eq("user_id", user.id)
       .maybeSingle();
     if (dayError) throw dayError;
     if (!dayRow) return Response.json({ error: "No se encontró la jornada seleccionada." }, { status: 404 });
@@ -78,6 +80,6 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
     if (data !== true) return Response.json({ error: "El servidor no confirmó la sustitución de la jornada." }, { status: 409 });
     return Response.json({ updated: true });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "trip_days.replace");
   }
 }

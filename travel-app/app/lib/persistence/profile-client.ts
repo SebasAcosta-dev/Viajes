@@ -1,7 +1,7 @@
 "use client";
 
 import { defaultProfile } from "@/app/data/demo-data";
-import { getPersistenceMode } from "@/app/lib/persistence/mode";
+import { getPersistenceMode, setVisitorLocalMode } from "@/app/lib/persistence/mode";
 import { createSupabaseBrowserClient } from "@/app/lib/supabase/browser";
 import { validateProfilePreferences } from "@/app/lib/profile-preferences";
 import type { ProfilePreferences } from "@/app/lib/types";
@@ -10,20 +10,22 @@ const PROFILE_KEY = "viajes.profile.preferences.v1";
 const ANONYMOUS_SCOPE_KEY = "viajes.anonymous.scope.v1";
 
 function anonymousScope(): string {
-  let id = sessionStorage.getItem(ANONYMOUS_SCOPE_KEY);
+  let id = localStorage.getItem(ANONYMOUS_SCOPE_KEY) ?? sessionStorage.getItem(ANONYMOUS_SCOPE_KEY);
   if (!id) {
     id = crypto.randomUUID();
-    sessionStorage.setItem(ANONYMOUS_SCOPE_KEY, id);
   }
+  localStorage.setItem(ANONYMOUS_SCOPE_KEY, id);
   return `anonymous:${id}`;
 }
 
 export async function getPlannerDraftScope(): Promise<string> {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) {
+    setVisitorLocalMode(true);
     return "anonymous";
   }
   const { data, error } = await createSupabaseBrowserClient().auth.getUser();
   if (error) throw new Error("No se pudo comprobar la sesión para aislar el borrador del planificador.");
+  setVisitorLocalMode(!data.user);
   return data.user ? `user:${data.user.id}` : anonymousScope();
 }
 
@@ -52,8 +54,9 @@ async function requestProfile(method: "GET" | "PUT", preferences?: ProfilePrefer
 }
 
 export async function getProfilePreferences(): Promise<ProfilePreferences> {
-  if (getPersistenceMode() === "supabase") return requestProfile("GET");
   const scope = await getPlannerDraftScope();
+  if (getPersistenceMode() === "supabase" && scope.startsWith("user:")) return requestProfile("GET");
+  if (getPersistenceMode() === "supabase") throw new Error("Inicia sesión para consultar las preferencias privadas de tu cuenta.");
   const key = `${PROFILE_KEY}.${encodeURIComponent(scope)}`;
   const serialized = localStorage.getItem(key) ?? (scope === "anonymous" ? localStorage.getItem(PROFILE_KEY) : null);
   if (!serialized) return { ...defaultProfile };
@@ -70,8 +73,9 @@ export async function getProfilePreferences(): Promise<ProfilePreferences> {
 export async function saveProfilePreferences(preferences: ProfilePreferences): Promise<ProfilePreferences> {
   const validated = validateProfilePreferences(preferences);
   if (!validated) throw new Error("Las preferencias del perfil no son válidas.");
-  if (getPersistenceMode() === "supabase") return requestProfile("PUT", validated);
   const scope = await getPlannerDraftScope();
+  if (getPersistenceMode() === "supabase" && scope.startsWith("user:")) return requestProfile("PUT", validated);
+  if (getPersistenceMode() === "supabase") throw new Error("Inicia sesión para guardar las preferencias privadas de tu cuenta.");
   localStorage.setItem(`${PROFILE_KEY}.${encodeURIComponent(scope)}`, JSON.stringify(validated));
   return validated;
 }

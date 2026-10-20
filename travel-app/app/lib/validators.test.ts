@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { calculateBudgetBreakdown, reorderItineraryItems, validateFavoriteTarget, validateTripForm } from "@/app/lib/validators";
+import { addIsoDays } from "@/app/lib/date-format";
+import { localTodayIso } from "@/app/lib/trip-dates";
 
 describe("validateTripForm", () => {
   it("acepta un formulario válido", () => {
     const errors = validateTripForm({
       origin: "Madrid",
       destination: "Marrakech",
-      startDate: "2026-04-12",
-      endDate: "2026-04-16",
+      startDate: localTodayIso(),
+      endDate: addIsoDays(localTodayIso(), 4) ?? localTodayIso(),
       travelers: 2,
       budget: 800,
       currency: "EUR",
@@ -24,8 +26,8 @@ describe("validateTripForm", () => {
     const errors = validateTripForm({
       origin: "Madrid",
       destination: "",
-      startDate: "2026-04-16",
-      endDate: "2026-04-12",
+      startDate: addIsoDays(localTodayIso(), 4) ?? localTodayIso(),
+      endDate: localTodayIso(),
       travelers: 0,
       budget: 0,
       currency: "EUR",
@@ -60,6 +62,24 @@ describe("validateTripForm", () => {
     });
     expect(errors).toContain("La fecha de salida no es válida.");
     expect(errors).toContain("El número de viajeros debe ser un entero entre 1 y 100.");
+  });
+
+  it("rechaza una fecha de salida anterior al día actual al crear un viaje", () => {
+    const errors = validateTripForm({
+      origin: "Madrid",
+      destination: "Marrakech",
+      startDate: "2020-01-01",
+      endDate: "2020-01-02",
+      travelers: 1,
+      budget: 100,
+      currency: "EUR",
+      interests: ["Historia"],
+      travelType: "Cultural",
+      pace: "equilibrado",
+      notes: "",
+    });
+
+    expect(errors).toContain("La fecha de salida no puede ser anterior al día actual.");
   });
 });
 

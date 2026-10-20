@@ -75,6 +75,11 @@ describe("preferencias de perfil", () => {
 
   it("no confirma preferencias de Supabase si la operación falla", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
+    createSupabaseBrowserClientMock.mockReturnValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "account-1" } }, error: null }) },
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "Inicia sesión." }), {
       status: 401,
       headers: { "Content-Type": "application/json" },

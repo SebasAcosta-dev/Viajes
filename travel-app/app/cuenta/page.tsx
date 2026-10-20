@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/app/lib/supabase/browser";
 import { getPersistenceMode } from "@/app/lib/persistence/mode";
 import { FavoriteDestinations } from "@/app/components/favorite-destinations";
 import { ProfilePreferencesForm } from "@/app/components/profile-preferences-form";
+import { DeviceTripImport } from "@/app/components/device-trip-import";
+import { setVisitorLocalMode } from "@/app/lib/persistence/mode";
 
 type AuthAction = "signin" | "signup";
 type AuthFormState = {
@@ -25,6 +28,7 @@ const emptyAuthForm: AuthFormState = {
 };
 
 export default function AccountPage() {
+  const router = useRouter();
   const [authForms, setAuthForms] = useState<Record<AuthAction, AuthFormState>>({
     signin: { ...emptyAuthForm },
     signup: { ...emptyAuthForm },
@@ -42,9 +46,13 @@ export default function AccountPage() {
   useEffect(() => {
     if (!supabaseMode || !supabaseConfigured) return;
     const supabase = createSupabaseBrowserClient();
-    void supabase.auth.getUser().then(({ data }) => setSignedInEmail(data.user?.email ?? null));
+    void supabase.auth.getUser().then(({ data }) => {
+      setSignedInEmail(data.user?.email ?? null);
+      setVisitorLocalMode(!data.user);
+    });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSignedInEmail(session?.user.email ?? null);
+      setVisitorLocalMode(!session?.user);
     });
     return () => listener.subscription.unsubscribe();
   }, [supabaseConfigured, supabaseMode]);
@@ -68,7 +76,8 @@ export default function AccountPage() {
         ? await supabase.auth.signInWithPassword({ email: credentials.email, password: credentials.password })
         : await supabase.auth.signUp({ email: credentials.email, password: credentials.password });
       if (result.error) throw result.error;
-      setSignedInEmail(result.data.user?.email ?? null);
+      setSignedInEmail(result.data.session?.user.email ?? null);
+      setVisitorLocalMode(!result.data.session?.user);
       updateAuthForm(action, { message: action === "signup" && !result.data.session
         ? "Cuenta creada. Confirma el correo y vuelve para iniciar sesión."
         : "Sesión iniciada. Tus datos privados se guardarán en Supabase." });
@@ -88,7 +97,9 @@ export default function AccountPage() {
       const { error: signOutError } = await createSupabaseBrowserClient().auth.signOut();
       if (signOutError) throw signOutError;
       setSignedInEmail(null);
+      setVisitorLocalMode(true);
       setMessage("Sesión cerrada.");
+      router.replace("/");
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "No se pudo cerrar la sesión.");
     }
@@ -142,11 +153,14 @@ export default function AccountPage() {
         {message && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{message}</p>}
         {error && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">{error}</p>}
       </section>
+      {signedInEmail && supabaseMode && supabaseConfigured && <DeviceTripImport />}
       <section className="mt-6 grid min-w-0 gap-4 xl:grid-cols-2" aria-label="Preferencias y destinos favoritos">
         <details onToggle={(event) => setPreferencesOpen(event.currentTarget.open)} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <summary className="cursor-pointer text-lg font-semibold text-slate-900">Preferencias de viaje</summary>
           <p className="my-4 text-sm leading-relaxed text-slate-600">Configura moneda, intereses, ritmo y tipos de viaje. Se usarán como valores iniciales al planificar.</p>
-          {preferencesOpen && <ProfilePreferencesForm />}
+          {preferencesOpen && (signedInEmail || !supabaseMode
+            ? <ProfilePreferencesForm />
+            : <p className="my-4 text-sm text-slate-600">Inicia sesión para consultar o modificar las preferencias privadas de tu cuenta.</p>)}
         </details>
         <details onToggle={(event) => setFavoritesOpen(event.currentTarget.open)} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <summary className="cursor-pointer text-lg font-semibold text-slate-900">Destinos favoritos</summary>

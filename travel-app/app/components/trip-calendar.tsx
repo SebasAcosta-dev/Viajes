@@ -6,6 +6,7 @@ import { getCalendarEntries, getMonthDates, getWeekDates } from "@/app/lib/calen
 import { formatIsoDate } from "@/app/lib/date-format";
 import { listTrips } from "@/app/lib/persistence/client";
 import type { SavedTrip } from "@/app/lib/persistence/types";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 
 type CalendarView = "month" | "week" | "agenda";
 
@@ -57,6 +58,7 @@ export function TripCalendar({
   const refresh = useCallback(async () => {
     setError("");
     try {
+      await getPlannerDraftScope();
       setLoadedTrips(await listTrips());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudieron cargar los viajes.");

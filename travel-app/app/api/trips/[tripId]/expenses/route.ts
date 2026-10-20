@@ -29,6 +29,7 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
         .select("id")
         .eq("id", expense.activityId)
         .eq("trip_id", tripId)
+        .eq("user_id", user.id)
         .maybeSingle();
       if (activityError) throw activityError;
       if (!activity) return Response.json({ error: "La actividad relacionada no pertenece a este viaje o ya no existe." }, { status: 400 });
@@ -51,6 +52,6 @@ export async function POST(request: Request, context: { params: Promise<{ tripId
     if (error) throw error;
     return Response.json({ expense: mapExpense(data as Record<string, unknown>) }, { status: 201 });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "expenses.create");
   }
 }

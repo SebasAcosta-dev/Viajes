@@ -17,18 +17,23 @@ import {
   updateTrip,
 } from "@/app/lib/persistence/client";
 import type { TripDraft } from "@/app/lib/persistence/types";
+import { addIsoDays } from "@/app/lib/date-format";
+import { localTodayIso } from "@/app/lib/trip-dates";
+import { setVisitorLocalMode } from "@/app/lib/persistence/mode";
 
+const today = localTodayIso();
 const draft: TripDraft = {
   name: "Prueba en Marrakech",
   destination: "Marrakech",
-  startDate: "2026-10-19",
-  endDate: "2026-10-19",
+  startDate: today,
+  endDate: today,
   travelers: 3,
   budget: 250,
   currency: "EUR",
   itinerary: [{
     id: "day-1",
     dayNumber: 1,
+    date: today,
     theme: "Medina",
     summary: "",
     items: [{
@@ -60,8 +65,8 @@ describe("persistencia en modo demo", () => {
   it("crea un viaje persistente, actualiza presupuesto/actividad, registra gastos y elimina el viaje", async () => {
     const trip = await saveTrip(draft);
     expect((await listTrips()).find((entry) => entry.id === trip.id)).toMatchObject({
-      startDate: "2026-10-19",
-      endDate: "2026-10-19",
+      startDate: today,
+      endDate: today,
       travelers: 3,
     });
 
@@ -132,6 +137,37 @@ describe("persistencia en modo demo", () => {
     ]);
   });
 
+  it("normaliza las fechas pasadas al crear y no reescribe un viaje histórico al editar otros campos", async () => {
+    const pastDraft = {
+      ...draft,
+      startDate: "2020-01-01",
+      endDate: "2020-01-01",
+      itinerary: [{ ...draft.itinerary[0], date: "2020-01-01" }],
+    };
+    const created = await saveTrip(pastDraft);
+    expect(created).toMatchObject({
+      startDate: today,
+      endDate: today,
+      itinerary: [{ date: today }],
+    });
+
+    const historical = {
+      ...created,
+      startDate: "2020-01-01",
+      endDate: "2020-01-01",
+      itinerary: [{ ...created.itinerary[0], date: "2020-01-01" }],
+    };
+    localStorage.setItem("viajes.persisted.trips.v1", JSON.stringify([historical]));
+    await updateTrip(historical.id, { budget: 300 });
+
+    expect((await listTrips())[0]).toMatchObject({
+      startDate: "2020-01-01",
+      endDate: "2020-01-01",
+      itinerary: [{ date: "2020-01-01" }],
+      budget: 300,
+    });
+  });
+
   it("crea un grupo de viajes locales sin fusionar los originales", async () => {
     const first = await saveTrip(draft);
     const second = await saveTrip({ ...draft, name: "Segundo destino", destination: "Fez" });
@@ -147,10 +183,10 @@ describe("persistencia en modo demo", () => {
   it("solo sustituye una jornada y conserva las demás; reordena elementos de forma local", async () => {
     const twoDayDraft = {
       ...draft,
-      endDate: "2026-10-20",
+      endDate: addIsoDays(today, 1) ?? today,
       itinerary: [
         { ...draft.itinerary[0], items: [...draft.itinerary[0].items] },
-        { ...draft.itinerary[0], id: "day-2", dayNumber: 2, date: "2026-10-20", theme: "Día dos", items: [...draft.itinerary[0].items] },
+        { ...draft.itinerary[0], id: "day-2", dayNumber: 2, date: addIsoDays(today, 1), theme: "Día dos", items: [...draft.itinerary[0].items] },
       ],
     };
     twoDayDraft.itinerary[0].items.push({
@@ -175,8 +211,22 @@ describe("persistencia en modo demo", () => {
 
 describe("persistencia Supabase", () => {
   afterEach(() => {
+    localStorage.clear();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("guarda y recupera borradores de visitante en el dispositivo sin llamar a Supabase", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    localStorage.clear();
+    setVisitorLocalMode(true);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const saved = await saveTrip(draft);
+    expect(saved).toMatchObject({ name: draft.name, destination: draft.destination });
+    expect(await listTrips()).toEqual([saved]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("no confirma un guardado cuando la API Supabase falla", async () => {
@@ -189,6 +239,43 @@ describe("persistencia Supabase", () => {
     ));
 
     await expect(saveTrip(draft)).rejects.toThrow("Inicia sesión.");
+  });
+
+  it("guarda el viaje mediante la API Supabase y rehidrata los datos en lecturas posteriores", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    const saved = {
+      ...draft,
+      id: "trip-remote-1",
+      itinerary: [{ ...draft.itinerary[0], items: [] }],
+      expenses: [],
+      createdAt: "2026-10-20T00:00:00.000Z",
+      updatedAt: "2026-10-20T00:00:00.000Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ trip: saved }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ trips: [saved] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ trips: [saved] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveTrip(draft)).resolves.toMatchObject({ id: "trip-remote-1" });
+    await expect(listTrips()).resolves.toMatchObject([{ id: "trip-remote-1", name: draft.name }]);
+    await expect(listTrips()).resolves.toMatchObject([{ id: "trip-remote-1", name: draft.name }]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/trips");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({
+      startDate: today,
+      endDate: today,
+      itinerary: [{ date: today }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("solicita al servidor únicamente el resumen ligero de viajes", async () => {
@@ -205,6 +292,21 @@ describe("persistencia Supabase", () => {
       { id: "trip-1", name: "Marrakech", destination: "Marrakech", status: "planificado" },
     ]);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/trips?summary=1");
+  });
+
+  it("envía la zona horaria local para validar fechas en el servidor", async () => {
+    vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ trips: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listTrips();
+
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "X-User-Time-Zone": Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
   });
 
   it("no interpreta una respuesta malformada de la API como un guardado exitoso", async () => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createSupabaseServerClient } from "@/app/lib/supabase/server";
-import { getAuthenticatedSupabase } from "@/app/lib/persistence/server";
+import { getAuthenticatedSupabase, persistenceErrorResponse } from "@/app/lib/persistence/server";
 
 vi.mock("@/app/lib/supabase/server", () => ({
   createSupabaseServerClient: vi.fn(),
@@ -24,6 +24,49 @@ describe("autorización Supabase", () => {
 
     await expect(getAuthenticatedSupabase())
       .rejects.toMatchObject({ status: 401 });
+  });
+
+  describe("diagnóstico seguro de persistencia", () => {
+    it("registra código y operación sin escribir el mensaje ni datos sensibles", async () => {
+      const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = persistenceErrorResponse({
+        code: "23505",
+        message: "column \"display_name\" of relation \"profiles\" includes user@example.com and api-secret",
+        name: "PostgrestError",
+        status: 409,
+      }, "profile.update");
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toContain("Supabase rechazó");
+      expect(logger).toHaveBeenCalledWith("[supabase-persistence-error]", {
+        operation: "profile.update",
+        code: "23505",
+        status: 409,
+        name: "PostgrestError",
+        column: "display_name",
+        table: "profiles",
+      });
+      expect(JSON.stringify(logger.mock.calls)).not.toContain("user@example.com");
+      expect(JSON.stringify(logger.mock.calls)).not.toContain("api-secret");
+    });
+
+    it("classifies 42501 as a permission denial without exposing the SQL error to clients", async () => {
+      const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = persistenceErrorResponse({
+        code: "42501",
+        message: "permission denied for table activities",
+      }, "trips.create");
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.error).toContain("permisos");
+      expect(body.error).not.toContain("activities");
+      expect(logger).toHaveBeenCalledWith("[supabase-persistence-error]", {
+        operation: "trips.create",
+        code: "42501",
+      });
+    });
   });
 
   it("falla cerrado con token expirado y clasifica la sesión como inválida", async () => {

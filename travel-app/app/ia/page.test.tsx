@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { addIsoDays } from "@/app/lib/date-format";
+import { localTodayIso } from "@/app/lib/trip-dates";
 
 vi.mock("@/app/components/save-trip-button", () => ({
   SaveTripButton: () => <button type="button">Guardar viaje</button>,
@@ -14,20 +16,22 @@ afterEach(() => {
 
 describe("asistente de viajes", () => {
   it("envía fechas y presupuesto, y presenta el periodo y horario estructurado", async () => {
+    const startDate = localTodayIso();
+    const endDate = addIsoDays(startDate, 3) ?? startDate;
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       source: "openrouter",
       text: "Itinerario listo.",
       itinerary: {
         destination: "Marrakech",
         durationDays: 4,
-        startDate: "2026-10-20",
-        endDate: "2026-10-23",
+        startDate,
+        endDate,
         travelers: 1,
         budget: { total: 100, currency: "EUR", status: "provided" },
         days: [{
           id: "day-1",
           dayNumber: 1,
-          date: "2026-10-20",
+          date: startDate,
           theme: "Medina",
           summary: "",
           items: [{
@@ -50,8 +54,11 @@ describe("asistente de viajes", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<IaPage />);
-    fireEvent.change(screen.getByLabelText("Salida"), { target: { value: "2026-10-20" } });
-    fireEvent.change(screen.getByLabelText("Regreso"), { target: { value: "2026-10-23" } });
+    const departure = screen.getByLabelText("Salida") as HTMLInputElement;
+    const returnDate = screen.getByLabelText("Regreso") as HTMLInputElement;
+    expect(departure.min).toBe(startDate);
+    fireEvent.change(departure, { target: { value: startDate } });
+    fireEvent.change(returnDate, { target: { value: endDate } });
     fireEvent.change(screen.getByLabelText("Viajeros"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Presupuesto"), { target: { value: "100" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
@@ -59,13 +66,13 @@ describe("asistente de viajes", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const request = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(request.context).toMatchObject({
-      startDate: "2026-10-20",
-      endDate: "2026-10-23",
+      startDate,
+      endDate,
       travelers: 1,
       budget: 100,
       currency: "EUR",
     });
-    expect(await screen.findByText(/20 de octubre de 2026 – 23 de octubre de 2026/)).toBeTruthy();
+    expect(await screen.findByText(new RegExp(`${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${startDate}T12:00:00Z`))} – ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${endDate}T12:00:00Z`))}`))).toBeTruthy();
     expect(screen.getByText("10:00–11:00")).toBeTruthy();
     expect(screen.getAllByText(/09:00–21:00/).length).toBeGreaterThan(0);
   });

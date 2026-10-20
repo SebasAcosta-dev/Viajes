@@ -6,20 +6,27 @@ const { getAuthenticatedSupabaseMock } = vi.hoisted(() => ({
 
 vi.mock("@/app/lib/persistence/server", () => ({
   getAuthenticatedSupabase: getAuthenticatedSupabaseMock,
-  persistenceErrorResponse: (error: unknown) => Response.json(
-    { error: error instanceof Error ? error.message : "Persistence error" },
-    { status: 500 },
-  ),
+  persistenceErrorResponse: (error: unknown) => {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Persistence error" },
+      { status: code === "42501" ? 403 : 500 },
+    );
+  },
 }));
 
 import { GET, POST } from "@/app/api/trips/route";
+import { addIsoDays } from "@/app/lib/date-format";
+import { dateInTimeZone } from "@/app/lib/trip-dates";
 
+const testToday = dateInTimeZone(new Date(), "UTC");
+const testStartDate = addIsoDays(testToday, 1) ?? testToday;
 const draft = {
   name: "Viaje a Marrakech",
   origin: "Madrid",
   destination: "Marrakech",
-  startDate: "2026-10-20",
-  endDate: "2026-10-20",
+  startDate: testStartDate,
+  endDate: testStartDate,
   travelers: 1,
   budget: 100,
   currency: "EUR",
@@ -28,7 +35,7 @@ const draft = {
   itinerary: [{
     id: "day-1",
     dayNumber: 1,
-    date: "2026-10-20",
+    date: testStartDate,
     theme: "Medina",
     summary: "",
     items: [{
@@ -57,6 +64,7 @@ function setup(
   schemaError?: { code?: string; message: string },
   rpcError?: { code?: string; message: string },
   readBackStartTime = "10:00:00",
+  readBackDate = testStartDate,
 ) {
   const schemaQuery = {
     select: vi.fn().mockReturnThis(),
@@ -67,8 +75,8 @@ function setup(
     name: "Viaje a Marrakech",
     origin: "Madrid",
     destination: "Marrakech",
-    start_date: "2026-10-20",
-    end_date: "2026-10-20",
+    start_date: readBackDate,
+    end_date: readBackDate,
     travelers: 1,
     budget: 100,
     currency: "EUR",
@@ -78,7 +86,7 @@ function setup(
     trip_days: [{
       id: "day-row-1",
       day_number: 1,
-      date: "2026-10-20",
+      date: readBackDate,
       theme: "Medina",
       summary: "",
       activities: [{
@@ -118,11 +126,11 @@ function setup(
   return { schemaQuery, tripQuery, supabase };
 }
 
-function request() {
+function request(payload: unknown = draft) {
   return new Request("http://localhost/api/trips", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(draft),
+    headers: { "Content-Type": "application/json", "X-User-Time-Zone": "UTC" },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -132,7 +140,7 @@ afterEach(() => {
 
 describe("POST /api/trips", () => {
   it("persiste los campos horarios y solo responde éxito tras leer el viaje guardado", async () => {
-    const { schemaQuery, supabase } = setup();
+    const { schemaQuery, supabase, tripQuery } = setup();
     const response = await POST(request());
     const body = await response.json();
 
@@ -155,7 +163,30 @@ describe("POST /api/trips", () => {
         })],
       }),
     });
+    expect(tripQuery.eq).toHaveBeenNthCalledWith(1, "id", "trip-1");
+    expect(tripQuery.eq).toHaveBeenNthCalledWith(2, "user_id", "user-1");
+  });
 
+  it("corrige a hoy las fechas de un viaje nuevo con salida pasada sin perder jornadas", async () => {
+    const yesterday = addIsoDays(testToday, -1) ?? testToday;
+    const historicalDraft = {
+      ...draft,
+      startDate: yesterday,
+      endDate: yesterday,
+      itinerary: [{ ...draft.itinerary[0], date: yesterday }],
+    };
+    const { supabase } = setup(undefined, undefined, "10:00:00", testToday);
+
+    const response = await POST(request(historicalDraft));
+
+    expect(response.status).toBe(201);
+    expect(supabase.rpc).toHaveBeenCalledWith("create_trip_with_itinerary", {
+      trip_payload: expect.objectContaining({
+        startDate: testToday,
+        endDate: testToday,
+        itinerary: [expect.objectContaining({ date: testToday })],
+      }),
+    });
   });
 
   it.each([
@@ -170,11 +201,18 @@ describe("POST /api/trips", () => {
   });
 
   it("no presenta otros errores de esquema como migraciones pendientes", async () => {
-    setup({ code: "42501", message: "permission denied for table activities" });
+    const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { supabase } = setup({ code: "42501", message: "permission denied for table activities" });
     const response = await POST(request());
     const body = await response.json();
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(403);
     expect(body.error).not.toContain("Aplica");
+    expect(logger).toHaveBeenCalledWith("Trip metadata schema check failed", {
+      code: "42501",
+      message: "permission denied for table activities",
+    });
+    expect(supabase.rpc).not.toHaveBeenCalled();
+    expect(logger).toHaveBeenCalledTimes(1);
   });
 
   it("no confirma el guardado si la función RPC no está disponible", async () => {
@@ -208,6 +246,7 @@ describe("GET /api/trips", () => {
     }];
     const summaryQuery = {
       select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue({ data: rows, error: null }),
     };
@@ -230,6 +269,64 @@ describe("GET /api/trips", () => {
     });
     expect(summaryQuery.select).toHaveBeenCalledWith("id,name,destination,status,start_date,end_date,budget,currency");
     expect(summaryQuery.limit).toHaveBeenCalledWith(50);
+    expect(summaryQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
     expect(supabase.from).toHaveBeenCalledWith("trips");
+  });
+
+  it("recupera únicamente viajes pertenecientes al usuario autenticado", async () => {
+    const tripQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const supabase = { from: vi.fn().mockReturnValue(tripQuery) };
+    getAuthenticatedSupabaseMock.mockResolvedValue({ supabase, user: { id: "user-1" } });
+
+    const response = await GET(new Request("http://localhost/api/trips"));
+
+    expect(response.status).toBe(200);
+    expect(tripQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
+  });
+
+  it("permite volver a cargar el viaje creado desde la lista autenticada", async () => {
+    const savedRow = {
+      id: "trip-1",
+      name: "Viaje a Marrakech",
+      origin: "Madrid",
+      destination: "Marrakech",
+      start_date: testStartDate,
+      end_date: testStartDate,
+      travelers: 1,
+      budget: 100,
+      currency: "EUR",
+      interests: [],
+      travel_type: "Económico",
+      status: "borrador",
+      trip_days: [],
+      expenses: [],
+      created_at: "2026-10-20T00:00:00Z",
+      updated_at: "2026-10-20T00:00:00Z",
+    };
+    const tripQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [savedRow], error: null }),
+    };
+    const supabase = { from: vi.fn().mockReturnValue(tripQuery) };
+    getAuthenticatedSupabaseMock.mockResolvedValue({ supabase, user: { id: "user-1" } });
+
+    const response = await GET(new Request("http://localhost/api/trips"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      trips: [{
+        id: "trip-1",
+        startDate: testStartDate,
+        endDate: testStartDate,
+        itinerary: [],
+        expenses: [],
+      }],
+    });
+    expect(tripQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
   });
 });

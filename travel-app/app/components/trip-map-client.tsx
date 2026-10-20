@@ -7,6 +7,7 @@ import { listTrips } from "@/app/lib/persistence/client";
 import type { SavedTrip } from "@/app/lib/persistence/types";
 import { getTripMapActivities } from "@/app/lib/trip-map";
 import type { TripMapPoint } from "@/app/components/trip-map-view";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 
 const TripMapView = dynamic(
   () => import("@/app/components/trip-map-view").then((module) => module.TripMapView),
@@ -24,6 +25,7 @@ export function TripMapClient() {
   const refresh = useCallback(async () => {
     setError("");
     try {
+      await getPlannerDraftScope();
       const savedTrips = await listTrips();
       setTrips(savedTrips);
       setSelectedTripId((current) => current || savedTrips[0]?.id || "");

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ProfilePreferences } from "@/app/lib/types";
+import { addIsoDays } from "@/app/lib/date-format";
+import { localTodayIso } from "@/app/lib/trip-dates";
 
 const { pushMock, getPlannerDraftScopeMock, getProfilePreferencesMock, listFavoritesMock, listTripSummariesMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
@@ -62,13 +64,22 @@ describe("formulario del planificador", () => {
     const { container } = render(<TravelHome />);
     const submitButton = await screen.findByRole("button", { name: "Generar itinerario" });
     expect(container.querySelectorAll("form")).toHaveLength(1);
+    const startDate = screen.getByLabelText("Fecha de salida") as HTMLInputElement;
+    const endDate = screen.getByLabelText("Fecha de regreso") as HTMLInputElement;
+    expect(startDate.min).toBe(localTodayIso());
+    expect(startDate.value).toBe(localTodayIso());
+    expect(endDate.min).toBe(localTodayIso());
+    const movedStart = addIsoDays(localTodayIso(), 6) ?? localTodayIso();
+    fireEvent.change(startDate, { target: { value: movedStart } });
+    expect(endDate.value).toBe(movedStart);
+    fireEvent.change(endDate, { target: { value: addIsoDays(movedStart, 4) ?? movedStart } });
     fireEvent.click(submitButton);
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/itinerario"));
     const request = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(request.context.interests).toContain("Historia");
-    expect(request.context.startDate).toBe("2026-04-12");
-    expect(request.context.endDate).toBe("2026-04-16");
+    expect(request.context.startDate).toBe(movedStart);
+    expect(request.context.endDate).toBe(addIsoDays(movedStart, 4));
     expect(request.context.travelers).toBeGreaterThan(0);
     expect(request.context.budget).toBeGreaterThan(0);
     expect(request.context.currency).toBe("EUR");

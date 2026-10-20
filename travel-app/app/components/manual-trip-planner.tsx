@@ -11,7 +11,10 @@ import { allTravelInterests, resolveTripInterests } from "@/app/lib/interest-cat
 import { saveGeneratedItinerary, saveTripFormDraft } from "@/app/lib/generated-itinerary";
 import { getProfilePreferences, getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 import { validateTripForm } from "@/app/lib/validators";
+import { localTodayIso, normalizeNewDateRange, normalizeNewTripDates } from "@/app/lib/trip-dates";
+import { useLocalToday } from "@/app/hooks/use-local-today";
 import type { Currency, ProfilePreferences, TripFormValues } from "@/app/lib/types";
+import type { TripDraft } from "@/app/lib/persistence/types";
 
 const emptyForm: TripFormValues = {
   origin: "",
@@ -28,6 +31,7 @@ const emptyForm: TripFormValues = {
 };
 
 export function ManualTripPlanner() {
+  const today = useLocalToday();
   const router = useRouter();
   const [form, setForm] = useState<TripFormValues>(emptyForm);
   const [customInterests, setCustomInterests] = useState<string[]>([]);
@@ -53,7 +57,7 @@ export function ManualTripPlanner() {
         }));
       })
       .catch((error: unknown) => {
-        if (active) setNotice(
+        if (active && !(error instanceof Error && error.message.includes("Inicia sesión"))) setNotice(
           error instanceof Error
             ? `No se pudieron cargar las preferencias guardadas: ${error.message}`
             : "No se pudieron cargar las preferencias guardadas. Puedes completar el formulario con los valores disponibles.",
@@ -64,6 +68,17 @@ export function ManualTripPlanner() {
 
   const update = <Key extends keyof TripFormValues,>(key: Key, value: TripFormValues[Key]) => {
     setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateDate = (key: "startDate" | "endDate", value: string) => {
+    setForm((current) => ({
+      ...current,
+      ...normalizeNewDateRange(
+        key === "startDate" ? value : current.startDate,
+        key === "endDate" ? value : current.endDate,
+        today,
+      ),
+    }));
   };
 
   const prepareItinerary = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -84,18 +99,37 @@ export function ManualTripPlanner() {
       const days = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
       if (!days) throw new Error("No se pudo preparar un horario diario válido. Revisa las fechas o reduce la duración.");
       const durationDays = days.length;
+      const tripDraft: TripDraft = normalizeNewTripDates({
+        name: `${destination.name} · ${requestForm.startDate}`,
+        origin: requestForm.origin,
+        destination: destination.name,
+        startDate: requestForm.startDate,
+        endDate: requestForm.endDate,
+        travelers: requestForm.travelers,
+        budget: requestForm.budget,
+        currency: requestForm.currency,
+        interests: requestForm.interests,
+        travelType: requestForm.travelType,
+        status: "borrador",
+        itinerary: days,
+      }, localTodayIso());
       const scope = await getPlannerDraftScope();
-      saveTripFormDraft(requestForm, scope);
+      const normalizedForm = {
+        ...requestForm,
+        startDate: tripDraft.startDate ?? requestForm.startDate,
+        endDate: tripDraft.endDate ?? requestForm.endDate,
+      };
+      saveTripFormDraft(normalizedForm, scope);
       saveGeneratedItinerary({
-        form: requestForm,
+        form: normalizedForm,
         itinerary: {
           destination: destination.name,
           durationDays,
-          startDate: form.startDate,
-          endDate: form.endDate,
+          startDate: tripDraft.startDate ?? form.startDate,
+          endDate: tripDraft.endDate ?? form.endDate,
           travelers: form.travelers,
           budget: { total: form.budget, currency: form.currency, status: "provided" },
-          days,
+          days: tripDraft.itinerary,
         },
         source: "demo",
         generatedAt: new Date().toISOString(),
@@ -136,10 +170,10 @@ export function ManualTripPlanner() {
               </select>
             </label>
             <label className="text-sm font-medium text-slate-700">Fecha de salida
-              <input type="date" required value={form.startDate} onChange={(event) => update("startDate", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
+              <input type="date" required min={today} value={form.startDate} onChange={(event) => updateDate("startDate", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
             </label>
             <label className="text-sm font-medium text-slate-700">Fecha de regreso
-              <input type="date" required value={form.endDate} onChange={(event) => update("endDate", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
+              <input type="date" required min={form.startDate || today} value={form.endDate} onChange={(event) => updateDate("endDate", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
             </label>
             <label className="text-sm font-medium text-slate-700">Viajeros
               <input type="number" min={1} max={100} required value={form.travelers} onChange={(event) => update("travelers", Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />

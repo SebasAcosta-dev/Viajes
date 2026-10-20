@@ -2,10 +2,11 @@ import { persistenceErrorResponse, getAuthenticatedSupabase } from "@/app/lib/pe
 
 export async function GET() {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { data, error } = await supabase
       .from("favorites")
       .select("id,destination_slug,created_at,destinations!inner(name)")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
     if (error) throw error;
     const favorites = (data ?? []).map((row) => {
@@ -19,7 +20,7 @@ export async function GET() {
     });
     return Response.json({ favorites });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "favorites.read");
   }
 }
 
@@ -57,6 +58,6 @@ export async function POST(request: Request) {
       },
     }, { status: 201 });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "favorites.create");
   }
 }

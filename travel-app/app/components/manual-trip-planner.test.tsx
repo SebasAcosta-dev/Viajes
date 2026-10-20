@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadGeneratedItinerary } from "@/app/lib/generated-itinerary";
 import type { ProfilePreferences } from "@/app/lib/types";
+import { addIsoDays } from "@/app/lib/date-format";
+import { localTodayIso } from "@/app/lib/trip-dates";
 
 const { pushMock, getProfilePreferencesMock, getPlannerDraftScopeMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
@@ -41,9 +43,18 @@ describe("planificación manual", () => {
     getPlannerDraftScopeMock.mockResolvedValue("anonymous");
     render(<ManualTripPlanner />);
 
+    const startDate = addIsoDays(localTodayIso(), 2) ?? localTodayIso();
+    const endDate = addIsoDays(startDate, 2) ?? startDate;
     fireEvent.change(screen.getByRole("textbox", { name: "Origen" }), { target: { value: "Madrid" } });
-    fireEvent.change(screen.getByLabelText("Fecha de salida"), { target: { value: "2026-10-20" } });
-    fireEvent.change(screen.getByLabelText("Fecha de regreso"), { target: { value: "2026-10-22" } });
+    const departure = screen.getByLabelText("Fecha de salida") as HTMLInputElement;
+    const returnDate = screen.getByLabelText("Fecha de regreso") as HTMLInputElement;
+    expect(departure.min).toBe(localTodayIso());
+    fireEvent.change(departure, { target: { value: startDate } });
+    fireEvent.change(returnDate, { target: { value: endDate } });
+    const laterDeparture = addIsoDays(endDate, 2) ?? endDate;
+    fireEvent.change(departure, { target: { value: laterDeparture } });
+    expect(returnDate.value).toBe(laterDeparture);
+    fireEvent.change(returnDate, { target: { value: addIsoDays(laterDeparture, 2) ?? laterDeparture } });
     fireEvent.click(screen.getByRole("button", { name: "Continuar con preferencias" }));
     await screen.findByText("Preferencias cargadas para Ana.");
     fireEvent.change(screen.getByLabelText("Presupuesto para actividades"), { target: { value: "100" } });
@@ -53,8 +64,8 @@ describe("planificación manual", () => {
     const draft = loadGeneratedItinerary("anonymous");
     expect(draft?.source).toBe("demo");
     expect(draft?.form).toMatchObject({
-      startDate: "2026-10-20",
-      endDate: "2026-10-22",
+      startDate: laterDeparture,
+      endDate: addIsoDays(laterDeparture, 2),
       interests: ["Historia"],
       budget: 100,
     });

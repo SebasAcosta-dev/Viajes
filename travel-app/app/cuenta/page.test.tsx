@@ -7,13 +7,17 @@ const {
   getUserMock,
   onAuthStateChangeMock,
   unsubscribeMock,
+  replaceMock,
 } = vi.hoisted(() => ({
   signInWithPasswordMock: vi.fn(),
   signUpMock: vi.fn(),
   getUserMock: vi.fn(),
   onAuthStateChangeMock: vi.fn(),
   unsubscribeMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: replaceMock }) }));
 
 vi.mock("@/app/lib/supabase/browser", () => ({
   createSupabaseBrowserClient: () => ({

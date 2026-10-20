@@ -6,6 +6,9 @@ import { useState } from "react";
 
 const navItems = [
   { href: "/", label: "Inicio" },
+  { href: "/destinos", label: "Destinos" },
+  { href: "/planificar", label: "Planificar" },
+  { href: "/ia", label: "Asistente" },
   { href: "/viajes", label: "Mis viajes" },
   { href: "/mapa", label: "Mapa" },
   { href: "/presupuesto", label: "Presupuesto" },
@@ -14,6 +17,8 @@ const navItems = [
 
 function getActiveNavigationHref(pathname: string): string {
   if (pathname === "/") return "/";
+  if (pathname === "/destinos") return "/destinos";
+  if (["/planificar", "/ia", "/itinerario"].includes(pathname)) return "/planificar";
   if (pathname === "/mapa") return "/mapa";
   if (pathname === "/presupuesto") return "/presupuesto";
   if (pathname === "/cuenta" || pathname === "/perfil" || pathname === "/favoritos") return "/cuenta";
@@ -45,7 +50,7 @@ export function SiteNavigation() {
         <nav
           id="primary-navigation"
           aria-label="Navegación principal"
-          className={`${menuOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:grid-cols-3 md:grid md:w-auto md:flex-1 md:grid-cols-5 md:gap-1 lg:gap-2`}
+          className={`${menuOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:grid-cols-4 md:grid md:w-auto md:flex-1 md:flex-wrap md:justify-end md:gap-1 lg:gap-2`}
         >
           {navItems.map((item) => (
             <Link

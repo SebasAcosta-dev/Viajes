@@ -4,7 +4,7 @@ import { calculateScheduledEnd } from "@/app/lib/itinerary-schedule";
 
 export async function PATCH(request: Request, context: { params: Promise<{ tripId: string; activityId: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId, activityId } = await context.params;
     const body: unknown = await request.json().catch(() => null);
     const update = validateActivityUpdate(body);
@@ -14,6 +14,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
       .select("id,day_id,start_time")
       .eq("id", activityId)
       .eq("trip_id", tripId)
+      .eq("user_id", user.id)
       .maybeSingle();
     if (currentError) throw currentError;
     if (!current) return Response.json({ error: "No se encontró la actividad o no tienes permiso para modificarla." }, { status: 404 });
@@ -28,6 +29,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
         .from("activities")
         .select("id,start_time,end_time")
         .eq("day_id", current.day_id)
+        .eq("trip_id", tripId)
+        .eq("user_id", user.id)
         .neq("id", activityId);
       if (dayError) throw dayError;
       const editedStartMinutes = Number(currentStart.slice(0, 2)) * 60 + Number(currentStart.slice(3, 5));
@@ -60,12 +63,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
       })
       .eq("id", activityId)
       .eq("trip_id", tripId)
+      .eq("user_id", user.id)
       .select("id")
       .maybeSingle();
     if (error) throw error;
     if (!data) return Response.json({ error: "No se encontró la actividad o no tienes permiso para modificarla." }, { status: 404 });
     return Response.json({ updated: true });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "activities.update");
   }
 }

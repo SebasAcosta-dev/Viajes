@@ -19,7 +19,7 @@ function mapExpense(row: Record<string, unknown>) {
 
 export async function PATCH(request: Request, context: { params: Promise<{ tripId: string; expenseId: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId, expenseId } = await context.params;
     const expense = validateExpense(await request.json().catch(() => null));
     if (!expense) return Response.json({ error: "Los datos del gasto no son válidos." }, { status: 400 });
@@ -28,6 +28,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
         .select("id")
         .eq("id", expense.activityId)
         .eq("trip_id", tripId)
+        .eq("user_id", user.id)
         .maybeSingle();
       if (activityError) throw activityError;
       if (!activity) return Response.json({ error: "La actividad relacionada no pertenece a este viaje o ya no existe." }, { status: 400 });
@@ -45,31 +46,33 @@ export async function PATCH(request: Request, context: { params: Promise<{ tripI
       })
       .eq("trip_id", tripId)
       .eq("id", expenseId)
+      .eq("user_id", user.id)
       .select("*")
       .maybeSingle();
     if (error) throw error;
     if (!data) return Response.json({ error: "No se encontró el gasto o no tienes permiso para modificarlo." }, { status: 404 });
     return Response.json({ expense: mapExpense(data as Record<string, unknown>) });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "expenses.update");
   }
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ tripId: string; expenseId: string }> }) {
   try {
-    const { supabase } = await getAuthenticatedSupabase();
+    const { supabase, user } = await getAuthenticatedSupabase();
     const { tripId, expenseId } = await context.params;
     const { data, error } = await supabase
       .from("expenses")
       .delete()
       .eq("trip_id", tripId)
       .eq("id", expenseId)
+      .eq("user_id", user.id)
       .select("id")
       .maybeSingle();
     if (error) throw error;
     if (!data) return Response.json({ error: "No se encontró el gasto o no tienes permiso para eliminarlo." }, { status: 404 });
     return Response.json({ deleted: true });
   } catch (error) {
-    return persistenceErrorResponse(error);
+    return persistenceErrorResponse(error, "expenses.delete");
   }
 }

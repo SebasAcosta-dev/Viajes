@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AssistantProviderError, generateTravelAssistantReply, type AssistantContext } from "@/app/lib/ai";
 import type { Currency } from "@/app/lib/types";
+import { requestTodayIso } from "@/app/lib/trip-dates";
 
 const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
 
@@ -10,7 +11,7 @@ function isValidIsoDate(value: unknown): value is string {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-function parseContext(value: unknown): AssistantContext | null {
+function parseContext(value: unknown, today: string): AssistantContext | null {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) return null;
 
@@ -33,6 +34,8 @@ function parseContext(value: unknown): AssistantContext | null {
   if (typeof input.startDate === "string" && typeof input.endDate === "string" && input.endDate < input.startDate) {
     return null;
   }
+  if ((typeof input.startDate === "string" && input.startDate < today)
+    || (typeof input.endDate === "string" && input.endDate < today)) return null;
   if (
     typeof input.startDate === "string" && typeof input.endDate === "string"
     && (Date.parse(`${input.endDate}T00:00:00Z`) - Date.parse(`${input.startDate}T00:00:00Z`)) / 86_400_000 >= 30
@@ -74,7 +77,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const context = parseContext(input.context);
+  const context = parseContext(input.context, requestTodayIso(request));
   if (!context) {
     return NextResponse.json({ error: "El contexto del viaje no tiene un formato válido." }, { status: 400 });
   }

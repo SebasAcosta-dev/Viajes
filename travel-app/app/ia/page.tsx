@@ -9,6 +9,8 @@ import type { ItineraryPlan } from "@/app/lib/ai";
 import { SaveTripButton } from "@/app/components/save-trip-button";
 import { addIsoDays, formatIsoDate, formatTripPeriod } from "@/app/lib/date-format";
 import { getBlockTypeLabel } from "@/app/lib/itinerary-schedule";
+import { normalizeNewDateRange } from "@/app/lib/trip-dates";
+import { useLocalToday } from "@/app/hooks/use-local-today";
 
 const defaultPrompt = "Organiza un viaje barato a Marrakech de cuatro días.";
 
@@ -21,6 +23,7 @@ function formatEstimate(amount: number, currency: Currency): string {
 }
 
 export default function IaPage() {
+  const today = useLocalToday();
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [answer, setAnswer] = useState(
     "Puedo ayudarte con un enfoque equilibrado: zocos, palacios, buen precio y tiempo para descansar. Recomiendo priorizar la medina, gastronomía y rutas compactas para reducir desplazamientos.",
@@ -36,6 +39,16 @@ export default function IaPage() {
     budget: "",
     currency: "EUR" as Currency,
   });
+  const updateTripDate = (key: "startDate" | "endDate", value: string) => {
+    setTripDetails((current) => ({
+      ...current,
+      ...normalizeNewDateRange(
+        key === "startDate" ? value : current.startDate,
+        key === "endDate" ? value : current.endDate,
+        today,
+      ),
+    }));
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -44,14 +57,19 @@ export default function IaPage() {
     setItinerary(null);
 
     try {
-      if (Boolean(tripDetails.startDate) !== Boolean(tripDetails.endDate)) {
+      const normalizedDates = normalizeNewDateRange(tripDetails.startDate, tripDetails.endDate, today);
+      if (normalizedDates.startDate !== tripDetails.startDate || normalizedDates.endDate !== tripDetails.endDate) {
+        setTripDetails((current) => ({ ...current, ...normalizedDates }));
+      }
+      const requestedDetails = { ...tripDetails, ...normalizedDates };
+      if (Boolean(requestedDetails.startDate) !== Boolean(requestedDetails.endDate)) {
         throw new Error("Indica las dos fechas del viaje o deja ambas vacías.");
       }
-      if (tripDetails.startDate && tripDetails.endDate && tripDetails.endDate < tripDetails.startDate) {
+      if (requestedDetails.startDate && requestedDetails.endDate && requestedDetails.endDate < requestedDetails.startDate) {
         throw new Error("La fecha de regreso no puede ser anterior a la salida.");
       }
-      if (tripDetails.startDate && tripDetails.endDate &&
-        (Date.parse(`${tripDetails.endDate}T00:00:00Z`) - Date.parse(`${tripDetails.startDate}T00:00:00Z`)) / 86_400_000 >= 30) {
+      if (requestedDetails.startDate && requestedDetails.endDate &&
+        (Date.parse(`${requestedDetails.endDate}T00:00:00Z`) - Date.parse(`${requestedDetails.startDate}T00:00:00Z`)) / 86_400_000 >= 30) {
         throw new Error("El itinerario admite hasta 30 días.");
       }
       const travelers = tripDetails.travelers ? Number(tripDetails.travelers) : undefined;
@@ -63,13 +81,16 @@ export default function IaPage() {
         throw new Error("El presupuesto debe ser un importe no negativo.");
       }
       const context = {
-        ...(tripDetails.startDate ? { startDate: tripDetails.startDate, endDate: tripDetails.endDate } : {}),
+        ...(requestedDetails.startDate ? { startDate: requestedDetails.startDate, endDate: requestedDetails.endDate } : {}),
         ...(travelers !== undefined ? { travelers } : {}),
         ...(budget !== undefined ? { budget, currency: tripDetails.currency } : {}),
       };
       const response = await fetch("/api/assistant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Time-Zone": Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        },
         body: JSON.stringify({ message: prompt, context }),
       });
 
@@ -122,10 +143,10 @@ export default function IaPage() {
           <fieldset className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 p-4 sm:grid-cols-2 md:col-span-2 lg:grid-cols-4">
             <legend className="px-1 text-sm font-medium text-slate-700">Datos del viaje (opcionales)</legend>
             <label className="text-xs text-slate-600">Salida
-              <input type="date" value={tripDetails.startDate} onChange={(event) => setTripDetails({ ...tripDetails, startDate: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input type="date" min={today} value={tripDetails.startDate} onChange={(event) => updateTripDate("startDate", event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
             </label>
             <label className="text-xs text-slate-600">Regreso
-              <input type="date" value={tripDetails.endDate} onChange={(event) => setTripDetails({ ...tripDetails, endDate: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input type="date" min={tripDetails.startDate || today} value={tripDetails.endDate} onChange={(event) => updateTripDate("endDate", event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
             </label>
             <label className="text-xs text-slate-600">Viajeros
               <input type="number" min={1} max={100} step={1} value={tripDetails.travelers} onChange={(event) => setTripDetails({ ...tripDetails, travelers: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />

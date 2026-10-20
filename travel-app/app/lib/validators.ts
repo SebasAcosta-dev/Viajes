@@ -1,4 +1,5 @@
 import { TripFormValues } from "@/app/lib/types";
+import { localTodayIso } from "@/app/lib/trip-dates";
 
 function isValidDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -15,6 +16,9 @@ export function validateTripForm(values: TripFormValues): string[] {
   if (!values.endDate) errors.push("La fecha de regreso es obligatoria.");
   if (values.startDate && !isValidDate(values.startDate)) errors.push("La fecha de salida no es válida.");
   if (values.endDate && !isValidDate(values.endDate)) errors.push("La fecha de regreso no es válida.");
+  if (values.startDate && isValidDate(values.startDate) && values.startDate < localTodayIso()) {
+    errors.push("La fecha de salida no puede ser anterior al día actual.");
+  }
   if (values.startDate && values.endDate && values.startDate > values.endDate) {
     errors.push("La fecha de regreso no puede ser anterior a la de salida.");
   }

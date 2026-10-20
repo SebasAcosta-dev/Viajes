@@ -2,8 +2,10 @@
 
 import { defaultFavorites, seedTrips } from "@/app/data/demo-data";
 import type { FavoriteDestination, SavedExpense, SavedTrip, SavedTripGroup, SavedTripSummary, TripDraft, TripUpdates } from "@/app/lib/persistence/types";
-import { getPersistenceMode } from "@/app/lib/persistence/mode";
+import { getPersistenceMode, isVisitorLocalMode, setVisitorLocalMode } from "@/app/lib/persistence/mode";
+import { localTodayIso, normalizeNewTripDates } from "@/app/lib/trip-dates";
 import type { ItineraryDay, ItineraryItem } from "@/app/lib/types";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 
 const TRIPS_KEY = "viajes.persisted.trips.v1";
 const FAVORITES_KEY = "viajes.persisted.favorites.v1";
@@ -24,11 +26,16 @@ function readStored<T>(key: string, fallback: T): T {
 }
 
 function demoTrips(): SavedTrip[] {
-  return readStored(TRIPS_KEY, seedTrips.map((trip) => ({ ...trip, expenses: [] })));
+  const fallback = getPersistenceMode() === "demo" ? seedTrips.map((trip) => ({ ...trip, expenses: [] })) : [];
+  return readStored(TRIPS_KEY, fallback);
+}
+
+function shouldUseSupabase(): boolean {
+  return getPersistenceMode() === "supabase" && !isVisitorLocalMode();
 }
 
 function demoFavorites(): FavoriteDestination[] {
-  const initial = defaultFavorites
+  const initial = (getPersistenceMode() === "demo" ? defaultFavorites : [])
     .filter((favorite) => favorite.type === "destination")
     .map((favorite) => ({
       id: favorite.id,
@@ -40,9 +47,14 @@ function demoFavorites(): FavoriteDestination[] {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-User-Time-Zone": timeZone,
+      ...init?.headers,
+    },
   });
   let body: unknown;
   try {
@@ -88,7 +100,7 @@ function normalizedDraft(draft: TripDraft, id: string, createdAt: string): Saved
 }
 
 export async function listTrips(): Promise<SavedTrip[]> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ trips?: unknown }>("/api/trips");
     if (!Array.isArray(result.trips)) throw new Error("El servidor no confirmó la lectura de los viajes.");
     return result.trips as SavedTrip[];
@@ -97,7 +109,7 @@ export async function listTrips(): Promise<SavedTrip[]> {
 }
 
 export async function listTripSummaries(): Promise<SavedTripSummary[]> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ trips?: unknown }>("/api/trips?summary=1");
     if (!Array.isArray(result.trips)) throw new Error("El servidor no confirmó la lectura resumida de los viajes.");
     return result.trips as SavedTripSummary[];
@@ -108,21 +120,22 @@ export async function listTripSummaries(): Promise<SavedTripSummary[]> {
 }
 
 export async function saveTrip(draft: TripDraft): Promise<SavedTrip> {
-  if (getPersistenceMode() === "supabase") {
-    const result = await api<{ trip?: unknown }>("/api/trips", { method: "POST", body: JSON.stringify(draft) });
+  const normalizedTripDraft = normalizeNewTripDates(draft, localTodayIso());
+  if (shouldUseSupabase()) {
+    const result = await api<{ trip?: unknown }>("/api/trips", { method: "POST", body: JSON.stringify(normalizedTripDraft) });
     if (!isRecord(result.trip) || typeof result.trip.id !== "string") {
       throw new Error("El servidor no confirmó el viaje guardado.");
     }
     return result.trip as unknown as SavedTrip;
   }
   const now = new Date().toISOString();
-  const trip = normalizedDraft(draft, newId(), now);
+  const trip = normalizedDraft(normalizedTripDraft, newId(), now);
   localStorage.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
   return trip;
 }
 
 export async function updateTrip(id: string, changes: TripUpdates): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ trip?: unknown }>(`/api/trips/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(changes),
@@ -150,7 +163,7 @@ export async function updateTrip(id: string, changes: TripUpdates): Promise<void
 }
 
 export async function deleteTrip(id: string): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ deleted?: unknown }>(`/api/trips/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (result.deleted !== true) throw new Error("El servidor no confirmó la eliminación del viaje.");
     return;
@@ -159,7 +172,7 @@ export async function deleteTrip(id: string): Promise<void> {
 }
 
 export async function updateActivity(tripId: string, activity: ItineraryItem): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ updated?: unknown }>(`/api/trips/${encodeURIComponent(tripId)}/activities/${encodeURIComponent(activity.id)}`, {
       method: "PATCH",
       body: JSON.stringify(activity),
@@ -185,7 +198,7 @@ export async function updateActivity(tripId: string, activity: ItineraryItem): P
 }
 
 export async function reorderActivities(tripId: string, dayId: string, activityIds: string[]): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ reordered?: unknown }>(
       `/api/trips/${encodeURIComponent(tripId)}/days/${encodeURIComponent(dayId)}/activities/reorder`,
       { method: "POST", body: JSON.stringify({ activityIds }) },
@@ -208,7 +221,7 @@ export async function reorderActivities(tripId: string, dayId: string, activityI
 }
 
 export async function replaceTripDay(tripId: string, dayNumber: number, day: ItineraryDay): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ updated?: unknown }>(
       `/api/trips/${encodeURIComponent(tripId)}/days/${dayNumber}/regenerate`,
       { method: "POST", body: JSON.stringify({ day }) },
@@ -227,7 +240,7 @@ export async function replaceTripDay(tripId: string, dayNumber: number, day: Iti
 }
 
 export async function listFavorites(): Promise<FavoriteDestination[]> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ favorites?: unknown }>("/api/favorites");
     if (!Array.isArray(result.favorites)) throw new Error("El servidor no confirmó la lectura de los favoritos.");
     return result.favorites as FavoriteDestination[];
@@ -236,7 +249,7 @@ export async function listFavorites(): Promise<FavoriteDestination[]> {
 }
 
 export async function toggleFavorite(destinationSlug: string, destinationName: string): Promise<FavoriteDestination[]> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const current = await listFavorites();
     const favorite = current.find((entry) => entry.destinationSlug === destinationSlug);
     if (favorite) {
@@ -262,7 +275,7 @@ export async function addExpense(
   tripId: string,
   expense: Omit<SavedExpense, "id" | "tripId" | "createdAt">,
 ): Promise<SavedExpense> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ expense?: unknown }>(`/api/trips/${encodeURIComponent(tripId)}/expenses`, {
       method: "POST",
       body: JSON.stringify(expense),
@@ -287,7 +300,7 @@ export async function updateExpense(
   expenseId: string,
   expense: Pick<SavedExpense, "category" | "description" | "amount" | "currency" | "incurredOn" | "notes" | "activityId">,
 ): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ expense?: unknown }>(
       `/api/trips/${encodeURIComponent(tripId)}/expenses/${encodeURIComponent(expenseId)}`,
       { method: "PATCH", body: JSON.stringify(expense) },
@@ -307,7 +320,7 @@ export async function updateExpense(
 }
 
 export async function deleteExpense(tripId: string, expenseId: string): Promise<void> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ deleted?: unknown }>(
       `/api/trips/${encodeURIComponent(tripId)}/expenses/${encodeURIComponent(expenseId)}`,
       { method: "DELETE" },
@@ -324,7 +337,7 @@ export async function deleteExpense(tripId: string, expenseId: string): Promise<
 }
 
 export async function listTripGroups(): Promise<SavedTripGroup[]> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ groups?: unknown }>("/api/trip-groups");
     if (!Array.isArray(result.groups)) throw new Error("El servidor no confirmó la lectura de los viajes combinados.");
     return result.groups as SavedTripGroup[];
@@ -336,7 +349,7 @@ export async function createTripGroup(
   name: string,
   items: SavedTripGroup["items"],
 ): Promise<SavedTripGroup> {
-  if (getPersistenceMode() === "supabase") {
+  if (shouldUseSupabase()) {
     const result = await api<{ group?: unknown }>("/api/trip-groups", {
       method: "POST",
       body: JSON.stringify({ name, items }),
@@ -361,5 +374,101 @@ export async function createTripGroup(
 }
 
 export function persistenceLabel(): string {
-  return getPersistenceMode() === "supabase" ? "Supabase" : "Demo local (este navegador)";
+  if (shouldUseSupabase()) return "Supabase";
+  if (getPersistenceMode() === "demo") return "Demo local (este navegador)";
+  return isVisitorLocalMode() ? "Dispositivo del visitante" : "Demo local (este navegador)";
+}
+
+export function saveTripToDevice(draft: TripDraft): SavedTrip {
+  setVisitorLocalMode(true);
+  const now = new Date().toISOString();
+  const trip = normalizedDraft(normalizeNewTripDates(draft, localTodayIso()), newId(), now);
+  localStorage.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
+  return trip;
+}
+
+export function listDeviceTrips(): SavedTrip[] {
+  return readStored(TRIPS_KEY, []);
+}
+
+export async function countDeviceTripsPendingImport(): Promise<number> {
+  const scope = await getPlannerDraftScope();
+  if (!scope.startsWith("user:") || getPersistenceMode() !== "supabase") return 0;
+  const progressKey = `viajes.imported-device-trips.v1.${encodeURIComponent(scope.slice("user:".length))}`;
+  const progress = readStored<Record<string, boolean>>(progressKey, {});
+  return listDeviceTrips().filter((trip) => !progress[trip.id]).length;
+}
+
+export async function importDeviceTripsToAccount(): Promise<{ imported: number; total: number; skippedPast: number }> {
+  const scope = await getPlannerDraftScope();
+  if (!scope.startsWith("user:") || getPersistenceMode() !== "supabase") {
+    throw new Error("Inicia sesión con una cuenta de Supabase antes de importar tus viajes.");
+  }
+  const trips = listDeviceTrips();
+  const progressKey = `viajes.imported-device-trips.v1.${encodeURIComponent(scope.slice("user:".length))}`;
+  const progress = readStored<Record<string, boolean>>(progressKey, {});
+  const existingTrips = await listTrips();
+  let imported = 0;
+  let skippedPast = 0;
+  for (const trip of trips) {
+    if (progress[trip.id]) continue;
+    if (trip.startDate && trip.startDate < localTodayIso()) {
+      skippedPast += 1;
+      continue;
+    }
+    const signature = importSignature(trip);
+    if (existingTrips.some((existing) => importSignature(existing) === signature)) {
+      progress[trip.id] = true;
+      localStorage.setItem(progressKey, JSON.stringify(progress));
+      continue;
+    }
+    await saveTrip({
+      name: trip.name,
+      origin: trip.origin,
+      destination: trip.destination,
+      ...(trip.startDate ? { startDate: trip.startDate } : {}),
+      ...(trip.endDate ? { endDate: trip.endDate } : {}),
+      travelers: trip.travelers,
+      budget: trip.budget,
+      currency: trip.currency,
+      interests: trip.interests,
+      travelType: trip.travelType,
+      status: trip.status,
+      itinerary: trip.itinerary,
+    });
+    progress[trip.id] = true;
+    localStorage.setItem(progressKey, JSON.stringify(progress));
+    existingTrips.push(trip);
+    imported += 1;
+  }
+  return { imported, total: trips.length, skippedPast };
+}
+
+function importSignature(trip: SavedTrip): string {
+  return JSON.stringify({
+    name: trip.name,
+    origin: trip.origin,
+    destination: trip.destination,
+    startDate: trip.startDate,
+    endDate: trip.endDate,
+    travelers: trip.travelers,
+    budget: trip.budget,
+    currency: trip.currency,
+    itinerary: trip.itinerary.map((day) => ({
+      dayNumber: day.dayNumber,
+      date: day.date ?? null,
+      theme: day.theme,
+      summary: day.summary,
+      items: day.items.map((item) => ({
+        name: item.name,
+        description: item.description,
+        startTime: item.startTime ?? null,
+        endTime: item.endTime ?? null,
+        durationMinutes: item.durationMinutes,
+        estimate: item.estimate ?? null,
+        currency: item.currency,
+        order: item.order,
+      })),
+    })),
+  });
 }

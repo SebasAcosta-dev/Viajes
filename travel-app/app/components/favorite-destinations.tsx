@@ -5,6 +5,7 @@ import Link from "next/link";
 import { destinations } from "@/app/data/demo-data";
 import { listFavorites, persistenceLabel, toggleFavorite } from "@/app/lib/persistence/client";
 import type { FavoriteDestination } from "@/app/lib/persistence/types";
+import { getPlannerDraftScope } from "@/app/lib/persistence/profile-client";
 
 export function FavoriteDestinations() {
   const [favorites, setFavorites] = useState<FavoriteDestination[]>([]);
@@ -14,6 +15,7 @@ export function FavoriteDestinations() {
   const refresh = useCallback(async () => {
     setError("");
     try {
+      await getPlannerDraftScope();
       setFavorites(await listFavorites());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudieron cargar los favoritos.");
