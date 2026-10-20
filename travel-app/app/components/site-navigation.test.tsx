@@ -1,44 +1,64 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-
 import { SiteNavigation } from "@/app/components/site-navigation";
 
 const { usePathnameMock } = vi.hoisted(() => ({ usePathnameMock: vi.fn(() => "/") }));
 
 vi.mock("next/navigation", () => ({ usePathname: usePathnameMock }));
 
+beforeEach(() => usePathnameMock.mockReturnValue("/"));
+afterEach(() => vi.clearAllMocks());
+
 describe("navegación principal", () => {
-  it("muestra los accesos públicos y agrupa las rutas del proceso de planificación", () => {
+  it("muestra solo las cinco opciones principales y no duplica destinos secundarios", () => {
     render(<SiteNavigation />);
 
-    const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
-    expect(navigation.querySelectorAll("a")).toHaveLength(8);
-    expect([...navigation.querySelectorAll("a")].map((link) => link.textContent)).toEqual([
-      "Inicio", "Destinos", "Planificar", "Asistente", "Mis viajes", "Mapa", "Presupuesto", "Cuenta",
+    const navigation = screen.getByRole("navigation");
+    const links = [...navigation.querySelectorAll("a")];
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Inicio", "Mis viajes", "Mapa", "Presupuesto", "Cuenta",
     ]);
+    expect(links.map((link) => (link as HTMLAnchorElement).getAttribute("href"))).toEqual([
+      "/", "/viajes", "/mapa", "/presupuesto", "/cuenta",
+    ]);
+    expect(new Set(links.map((link) => (link as HTMLAnchorElement).href)).size).toBe(5);
+    for (const label of ["Destinos", "Planificar", "Asistente", "Favoritos", "Perfil"]) {
+      expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
+    }
     expect(screen.getByRole("link", { name: "Inicio" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Destinos" })).toHaveAttribute("href", "/destinos");
-    expect(screen.getByRole("link", { name: "Planificar" })).toHaveAttribute("href", "/planificar");
   });
 
-  it("resalta Mis viajes en las rutas secundarias del proceso de planificación", () => {
-    usePathnameMock.mockReturnValue("/ia");
+  it.each([
+    ["/destinos", "Inicio"],
+    ["/planificar", "Mis viajes"],
+    ["/ia", "Mis viajes"],
+    ["/itinerario", "Mis viajes"],
+    ["/viajes", "Mis viajes"],
+    ["/calendario", "Mis viajes"],
+    ["/favoritos", "Cuenta"],
+    ["/perfil", "Cuenta"],
+  ])("marca la sección principal correspondiente a %s", (pathname, label) => {
+    usePathnameMock.mockReturnValue(pathname);
     render(<SiteNavigation />);
 
-    expect(screen.getByRole("link", { name: "Planificar" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   });
 
-  it("expone el estado del menú adaptable y lo cierra al navegar", () => {
+  it("usa menú adaptable en móvil y una fila sin ajuste en escritorio", () => {
     render(<SiteNavigation />);
 
-    const toggle = screen.getByRole("button", { name: "Menú" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const navigation = screen.getByRole("navigation");
+    const toggle = screen.getByRole("button");
+    expect(toggle).toHaveClass("lg:hidden");
+    expect(navigation).toHaveClass("grid-cols-2", "sm:grid-cols-3", "lg:flex-nowrap", "hidden");
+    expect(navigation.parentElement).toHaveClass("lg:flex-nowrap");
+
     fireEvent.click(toggle);
-    expect(screen.getByRole("button", { name: "Cerrar menú" })).toHaveAttribute("aria-expanded", "true");
-
-    const destinationLink = screen.getByRole("link", { name: "Destinos" });
-    destinationLink.addEventListener("click", (event) => event.preventDefault());
-    fireEvent.click(destinationLink);
-    expect(screen.getByRole("button", { name: "Menú" })).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(navigation).toHaveClass("grid");
+    const mapLink = screen.getByRole("link", { name: "Mapa" });
+    mapLink.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(mapLink);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 });

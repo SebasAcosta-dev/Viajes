@@ -6,9 +6,6 @@ import { useState } from "react";
 
 const navItems = [
   { href: "/", label: "Inicio" },
-  { href: "/destinos", label: "Destinos" },
-  { href: "/planificar", label: "Planificar" },
-  { href: "/ia", label: "Asistente" },
   { href: "/viajes", label: "Mis viajes" },
   { href: "/mapa", label: "Mapa" },
   { href: "/presupuesto", label: "Presupuesto" },
@@ -16,13 +13,12 @@ const navItems = [
 ];
 
 function getActiveNavigationHref(pathname: string): string {
-  if (pathname === "/") return "/";
-  if (pathname === "/destinos") return "/destinos";
-  if (["/planificar", "/ia", "/itinerario"].includes(pathname)) return "/planificar";
-  if (pathname === "/mapa") return "/mapa";
-  if (pathname === "/presupuesto") return "/presupuesto";
-  if (pathname === "/cuenta" || pathname === "/perfil" || pathname === "/favoritos") return "/cuenta";
-  return "/viajes";
+  if (pathname === "/" || pathname.startsWith("/destinos")) return "/";
+  if (["/planificar", "/ia", "/itinerario", "/viajes", "/calendario"].some((route) => pathname === route || pathname.startsWith(`${route}/`))) return "/viajes";
+  if (pathname === "/mapa" || pathname.startsWith("/mapa/")) return "/mapa";
+  if (pathname === "/presupuesto" || pathname.startsWith("/presupuesto/")) return "/presupuesto";
+  if (["/cuenta", "/perfil", "/favoritos"].some((route) => pathname === route || pathname.startsWith(`${route}/`))) return "/cuenta";
+  return "/";
 }
 
 export function SiteNavigation() {
@@ -32,14 +28,14 @@ export function SiteNavigation() {
 
   return (
     <header className="border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-screen-2xl flex-wrap items-center justify-between gap-x-8 gap-y-3 px-4 py-4 sm:px-6 lg:px-8 2xl:px-10">
-        <Link href="/" className="min-w-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700">
+      <div className="mx-auto flex w-full max-w-screen-2xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-4 sm:px-6 lg:flex-nowrap lg:gap-x-8 lg:px-8 2xl:px-10">
+        <Link href="/" className="min-w-0 shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700">
           <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Viajes</span>
           <span className="block text-lg font-bold leading-tight text-slate-900 sm:text-xl">Planificador inteligente</span>
         </Link>
         <button
           type="button"
-          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 md:hidden"
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 lg:hidden"
           aria-expanded={menuOpen}
           aria-controls="primary-navigation"
           onClick={() => setMenuOpen((open) => !open)}
@@ -50,7 +46,7 @@ export function SiteNavigation() {
         <nav
           id="primary-navigation"
           aria-label="Navegación principal"
-          className={`${menuOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:grid-cols-4 md:grid md:w-auto md:flex-1 md:flex-wrap md:justify-end md:gap-1 lg:gap-2`}
+          className={`${menuOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:w-auto lg:flex-1 lg:flex-nowrap lg:justify-end lg:gap-1 xl:gap-2`}
         >
           {navItems.map((item) => (
             <Link
@@ -58,7 +54,7 @@ export function SiteNavigation() {
               href={item.href}
               onClick={() => setMenuOpen(false)}
               aria-current={activeHref === item.href ? "page" : undefined}
-              className={`flex min-h-11 min-w-0 items-center justify-center rounded-xl px-2 py-2 text-center text-sm font-semibold leading-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:px-3 ${
+              className={`flex min-h-11 min-w-0 items-center justify-center rounded-xl px-2 py-2 text-center text-sm font-semibold leading-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:px-3 lg:flex-none lg:whitespace-nowrap xl:px-3 ${
                 activeHref === item.href
                   ? "bg-emerald-50 text-emerald-800"
                   : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-800"

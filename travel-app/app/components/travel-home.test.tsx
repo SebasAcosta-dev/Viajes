@@ -64,6 +64,9 @@ describe("formulario del planificador", () => {
     const { container } = render(<TravelHome />);
     const submitButton = await screen.findByRole("button", { name: "Generar itinerario" });
     expect(container.querySelectorAll("form")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Crear viaje paso a paso" })).toHaveAttribute("href", "/planificar");
+    expect(screen.getByRole("link", { name: "Abrir el asistente IA" })).toHaveAttribute("href", "/ia");
+    expect(screen.getByRole("link", { name: "Explorar destinos" })).toHaveAttribute("href", "/destinos");
     const startDate = screen.getByLabelText("Fecha de salida") as HTMLInputElement;
     const endDate = screen.getByLabelText("Fecha de regreso") as HTMLInputElement;
     expect(startDate.min).toBe(localTodayIso());

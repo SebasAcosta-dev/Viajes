@@ -60,6 +60,9 @@ describe("formularios de autenticación de Cuenta", () => {
     signUpMock.mockResolvedValue({ error: null, data: { user: null, session: null } });
     render(<AccountPage />);
 
+    expect(screen.getByText("Preferencias de viaje")).toBeInTheDocument();
+    expect(screen.getByText("Destinos favoritos")).toBeInTheDocument();
+
     const signInForm = getAuthForm("Iniciar sesión");
     const signUpForm = getAuthForm("Crear cuenta");
     const signIn = within(signInForm);
