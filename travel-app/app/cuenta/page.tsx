@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/app/lib/supabase/browser";
 import { getPersistenceMode } from "@/app/lib/persistence/mode";
@@ -9,6 +9,7 @@ import { FavoriteDestinations } from "@/app/components/favorite-destinations";
 import { ProfilePreferencesForm } from "@/app/components/profile-preferences-form";
 import { DeviceTripImport } from "@/app/components/device-trip-import";
 import { setVisitorLocalMode } from "@/app/lib/persistence/mode";
+import { getAuthCallbackUrl } from "@/app/lib/supabase/auth-redirect";
 
 type AuthAction = "signin" | "signup";
 type AuthFormState = {
@@ -27,6 +28,31 @@ const emptyAuthForm: AuthFormState = {
   loading: false,
 };
 
+function safeAuthErrorMessage(error: unknown, action: "signin" | "signup" | "resend"): string {
+  const candidate = typeof error === "object" && error !== null
+    ? error as { code?: unknown; status?: unknown; message?: unknown }
+    : {};
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+
+  if (action === "signin" && (code === "invalid_credentials" || message.includes("invalid login credentials"))) {
+    return "No se pudo iniciar sesión. Comprueba las credenciales o, si esperas una confirmación, solicita el reenvío del correo.";
+  }
+  if (action === "signin" && (code === "email_not_confirmed" || message.includes("email not confirmed"))) {
+    return "El acceso requiere confirmar el correo. Puedes solicitar el reenvío desde este formulario.";
+  }
+  if (action === "signup" && ["user_already_exists", "email_exists"].includes(code)) {
+    return "No se pudo completar la solicitud. Prueba a iniciar sesión o a solicitar el reenvío de confirmación; no podemos determinar desde aquí el estado de una cuenta.";
+  }
+
+  const diagnostics = [
+    code ? `código ${code}` : "",
+    typeof candidate.status === "number" ? `HTTP ${candidate.status}` : "",
+  ].filter(Boolean).join(", ");
+  const operation = action === "signin" ? "el inicio de sesión" : action === "signup" ? "el registro" : "el reenvío del correo";
+  return `Supabase no pudo completar ${operation}${diagnostics ? ` (${diagnostics})` : ""}. Revisa los registros de Auth en Supabase; este mensaje no confirma la existencia de una cuenta ni la entrega de un correo.`;
+}
+
 export default function AccountPage() {
   const router = useRouter();
   const [authForms, setAuthForms] = useState<Record<AuthAction, AuthFormState>>({
@@ -36,6 +62,7 @@ export default function AccountPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
+  const authEventReceivedRef = useRef(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
   const supabaseMode = getPersistenceMode() === "supabase";
@@ -44,17 +71,42 @@ export default function AccountPage() {
   );
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const authResult = url.searchParams.get("auth");
+    let statusUpdate: number | undefined;
+    if (authResult === "confirmed") {
+      statusUpdate = window.setTimeout(() => setMessage("Correo confirmado. Ya puedes iniciar sesión."), 0);
+      window.history.replaceState(null, "", url.pathname);
+    } else if (authResult === "confirmation_error") {
+      statusUpdate = window.setTimeout(() => setError("No se pudo confirmar el correo. El enlace puede haber caducado; solicita un nuevo correo de confirmación."), 0);
+      window.history.replaceState(null, "", url.pathname);
+    }
+    return () => {
+      if (statusUpdate !== undefined) window.clearTimeout(statusUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!supabaseMode || !supabaseConfigured) return;
     const supabase = createSupabaseBrowserClient();
-    void supabase.auth.getUser().then(({ data }) => {
+    let isMounted = true;
+    void supabase.auth.getUser().then(({ data, error: userError }) => {
+      if (!isMounted || authEventReceivedRef.current || userError) return;
       setSignedInEmail(data.user?.email ?? null);
       setVisitorLocalMode(!data.user);
+    }).catch(() => {
+      // Keep the current UI state when auth state cannot be read; do not
+      // downgrade an active session or visitor preference on a transient error.
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      authEventReceivedRef.current = true;
       setSignedInEmail(session?.user.email ?? null);
       setVisitorLocalMode(!session?.user);
     });
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
   }, [supabaseConfigured, supabaseMode]);
 
   const updateAuthForm = (action: AuthAction, updates: Partial<AuthFormState>) => {
@@ -74,19 +126,64 @@ export default function AccountPage() {
       const supabase = createSupabaseBrowserClient();
       const result = action === "signin"
         ? await supabase.auth.signInWithPassword({ email: credentials.email, password: credentials.password })
-        : await supabase.auth.signUp({ email: credentials.email, password: credentials.password });
+        : await supabase.auth.signUp({
+          email: credentials.email,
+          password: credentials.password,
+          options: {
+            emailRedirectTo: getAuthCallbackUrl(window.location.origin, process.env.NEXT_PUBLIC_SITE_URL, {
+              environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
+              url: process.env.NEXT_PUBLIC_VERCEL_URL,
+              productionUrl: process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL,
+            }),
+          },
+        });
       if (result.error) throw result.error;
+      authEventReceivedRef.current = true;
       setSignedInEmail(result.data.session?.user.email ?? null);
       setVisitorLocalMode(!result.data.session?.user);
-      updateAuthForm(action, { message: action === "signup" && !result.data.session
-        ? "Cuenta creada. Confirma el correo y vuelve para iniciar sesión."
-        : "Sesión iniciada. Tus datos privados se guardarán en Supabase." });
+      updateAuthForm(action, {
+        message: action === "signup" && !result.data.session
+          ? "Solicitud recibida. Si el registro está disponible para este correo, revisa tu bandeja y spam. Si ya tienes una cuenta, inicia sesión o solicita el reenvío. No podemos confirmar desde aquí la existencia de la cuenta ni la entrega del correo."
+          : action === "signin"
+            ? "Sesión iniciada. Tus datos privados se guardarán en Supabase."
+            : "Sesión iniciada. Tus datos privados se guardarán en Supabase.",
+      });
     } catch (authError) {
       updateAuthForm(action, {
-        error: authError instanceof Error ? authError.message : "No se pudo completar la autenticación.",
+        error: safeAuthErrorMessage(authError, action),
       });
     } finally {
       updateAuthForm(action, { loading: false });
+    }
+  };
+
+  const handleResendConfirmation = async () => {
+    const email = authForms.signin.email.trim();
+    if (!email) {
+      updateAuthForm("signin", { error: "Escribe el correo en el formulario de inicio de sesión para solicitar un reenvío." });
+      return;
+    }
+    updateAuthForm("signin", { error: "", message: "", loading: true });
+    try {
+      const { error: resendError } = await createSupabaseBrowserClient().auth.resend({
+        type: "signup",
+        email,
+        options: {
+          emailRedirectTo: getAuthCallbackUrl(window.location.origin, process.env.NEXT_PUBLIC_SITE_URL, {
+            environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
+            url: process.env.NEXT_PUBLIC_VERCEL_URL,
+            productionUrl: process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL,
+          }),
+        },
+      });
+      if (resendError) throw resendError;
+      updateAuthForm("signin", {
+        message: "Solicitud procesada. Si hay una confirmación pendiente para este correo, revisa tu bandeja y spam. Supabase no confirma desde aquí la existencia de la cuenta ni la entrega del mensaje.",
+      });
+    } catch (resendError) {
+      updateAuthForm("signin", { error: safeAuthErrorMessage(resendError, "resend") });
+    } finally {
+      updateAuthForm("signin", { loading: false });
     }
   };
 
@@ -146,6 +243,12 @@ export default function AccountPage() {
                 <button disabled={authForms[action].loading} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
                   {authForms[action].loading ? "Procesando..." : action === "signin" ? "Entrar" : "Registrarme"}
                 </button>
+                {action === "signin" && <button
+                  type="button"
+                  disabled={authForms.signin.loading}
+                  onClick={() => void handleResendConfirmation()}
+                  className="ml-3 text-sm font-semibold text-emerald-800 underline disabled:opacity-50"
+                >Reenviar confirmación</button>}
               </form>
             ))}
           </div>

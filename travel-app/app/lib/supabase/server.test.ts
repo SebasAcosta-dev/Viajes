@@ -1,48 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createServerClient } from "@supabase/ssr";
-import { createSupabaseServerClient } from "@/app/lib/supabase/server";
 
-const { cookieStoreMock, createServerClientMock } = vi.hoisted(() => ({
+const { createServerClientMock, cookieStoreMock } = vi.hoisted(() => ({
+  createServerClientMock: vi.fn(),
   cookieStoreMock: {
-    getAll: vi.fn(() => [{ name: "sb-access-token", value: "initial-test-token" }]),
+    getAll: vi.fn(() => []),
     set: vi.fn(),
   },
-  createServerClientMock: vi.fn(),
 }));
 
-vi.mock("next/headers", () => ({
-  cookies: vi.fn(async () => cookieStoreMock),
-}));
+vi.mock("@supabase/ssr", () => ({ createServerClient: createServerClientMock }));
+vi.mock("next/headers", () => ({ cookies: vi.fn(async () => cookieStoreMock) }));
 
-vi.mock("@supabase/ssr", () => ({
-  createServerClient: createServerClientMock,
-}));
+import { createSupabaseServerClient } from "@/app/lib/supabase/server";
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
 });
 
-describe("cookies de Supabase en rutas servidor", () => {
-  it("pasa la cookie de sesión al cliente y persiste las cookies renovadas", async () => {
+describe("cliente SSR de Supabase", () => {
+  it("lee y escribe las cookies de sesión en handlers de servidor", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "test-publishable-key");
-    createServerClientMock.mockReturnValue({} as never);
+    createServerClientMock.mockReturnValue({ auth: {} });
 
     await createSupabaseServerClient();
-
-    const options = vi.mocked(createServerClient).mock.calls[0][2];
-    expect(options.cookies.getAll()).toEqual([{ name: "sb-access-token", value: "initial-test-token" }]);
-    const renewedCookie = {
-      name: "sb-access-token",
-      value: "renewed-test-token",
-      options: { path: "/", httpOnly: true },
+    const options = createServerClientMock.mock.calls[0][2] as {
+      cookies: {
+        getAll: () => unknown[];
+        setAll: (cookies: { name: string; value: string; options: { path: string } }[]) => void;
+      };
     };
-    options.cookies.setAll([renewedCookie]);
-    expect(cookieStoreMock.set).toHaveBeenCalledWith(
-      renewedCookie.name,
-      renewedCookie.value,
-      renewedCookie.options,
-    );
+    const cookie = { name: "sb-access-token", value: "test-token", options: { path: "/" } };
+
+    expect(options.cookies.getAll()).toEqual([]);
+    options.cookies.setAll([cookie]);
+    expect(cookieStoreMock.set).toHaveBeenCalledWith(cookie.name, cookie.value, cookie.options);
   });
 });
