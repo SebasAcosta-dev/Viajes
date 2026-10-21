@@ -59,5 +59,3 @@ export async function updateTripActivity(
   if (error) throw error;
   return data ? "UPDATED" : "NOT_FOUND";
 }
-
-\n

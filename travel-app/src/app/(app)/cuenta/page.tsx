@@ -11,6 +11,7 @@ import { DeviceTripImport } from "@/features/trips/components/device-trip-import
 import { setVisitorLocalMode } from "@/lib/persistence/mode";
 import { getAuthCallbackUrl } from "@/lib/supabase/auth-redirect";
 import { getPublicEnvironment } from "@/lib/env";
+import { PageHeading } from "@/components/ui";
 
 type AuthAction = "signin" | "signup";
 type AccountTab = "access" | "preferences" | "favorites";
@@ -238,14 +239,9 @@ export default function AccountPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Cuenta</p>
-          <h1 className="text-3xl font-bold sm:text-4xl">Acceso a tus viajes</h1>
-        </div>
-        <Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">Inicio</Link>
-      </div>
+    <main className="account-page mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
+      <PageHeading eyebrow="Tu espacio" title="Cuenta y preferencias" description="Gestiona el acceso, tus preferencias de viaje y los destinos guardados."
+        actions={<Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">Inicio</Link>} />
       <nav className="mb-5 flex flex-wrap gap-2" aria-label="Secciones de Cuenta">
         {([
           ["access", "Acceso"],

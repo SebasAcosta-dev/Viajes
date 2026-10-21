@@ -246,11 +246,11 @@ export function TravelHome() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <main className="mx-auto flex w-full max-w-screen-2xl flex-col gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-8 lg:px-8 2xl:px-10">
-        <section className="grid min-w-0 gap-6 rounded-3xl bg-gradient-to-br from-emerald-600 via-cyan-600 to-sky-700 p-5 text-white shadow-xl sm:p-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] lg:gap-8">
+    <div className="home-dashboard">
+      <main className="home-main mx-auto flex w-full max-w-screen-2xl flex-col gap-8 px-4 py-6 sm:gap-10 sm:px-6 sm:py-8 lg:px-8 2xl:px-10">
+        <section className="home-hero grid min-w-0 gap-6 rounded-3xl p-5 text-white shadow-xl sm:p-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] lg:gap-8" style={{ backgroundImage: `linear-gradient(90deg, rgba(9,35,36,.94) 0%, rgba(9,35,36,.74) 56%, rgba(9,35,36,.28) 100%), url(${selectedDestination.image})` }}>
           <div>
-            <p className="mb-3 inline-block rounded-full bg-white/15 px-3 py-1 text-xs uppercase tracking-[0.2em]">Tu espacio de viaje</p>
+            <p className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs uppercase tracking-[0.2em]"><span aria-hidden="true">✦</span> Tu espacio de viaje</p>
             <h1 className="max-w-3xl text-3xl font-bold leading-tight sm:text-4xl xl:text-5xl">
               Hola{profile.name.trim() ? `, ${profile.name.trim()}` : ""}. Tus viajes, en un solo lugar.
             </h1>
@@ -262,7 +262,7 @@ export function TravelHome() {
               <Link href="/viajes" className="rounded-full border border-white/40 bg-white/10 px-5 py-3 font-semibold">Gestionar mis viajes</Link>
             </div>
           </div>
-          <div className="rounded-2xl bg-slate-950/15 p-5 shadow-inner ring-1 ring-white/20">
+          <div className="next-trip-card rounded-2xl bg-slate-950/15 p-5 shadow-inner ring-1 ring-white/20">
             <p className="text-xs uppercase tracking-[0.2em] text-emerald-50/80">Tu próximo plan</p>
             {upcomingTrips[0] ? (
               <>

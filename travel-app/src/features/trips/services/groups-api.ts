@@ -46,5 +46,3 @@ export async function createUserTripGroup(supabase: AppSupabase, userId: string,
   if (error) throw error;
   return data ? mapGroup(data as unknown as Record<string, unknown>) : null;
 }
-
-\n

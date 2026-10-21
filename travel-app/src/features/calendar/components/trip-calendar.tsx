@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { PageHeading } from "@/components/ui";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { getCalendarEntries, getMonthDates, getWeekDates } from "@/lib/calendar";
 import { formatIsoDate } from "@/lib/date-format";
@@ -89,18 +90,10 @@ export function TripCalendar({
   };
 
   return (
-    <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-label="Calendario de viajes">
+    <section className="calendar-panel min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-label="Calendario de viajes">
       {!embedded && (
-        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Organización</p>
-            <h1 className="text-3xl font-bold sm:text-4xl">Calendario de viajes</h1>
-            <p className="mt-2 max-w-3xl text-base leading-relaxed text-slate-600">
-              Reúne los periodos de viaje y las actividades guardadas. Los itinerarios antiguos aparecen por fecha sin asignarles horas.
-            </p>
-          </div>
-          <Link href="/viajes" className="min-h-11 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white">Gestionar viajes</Link>
-        </header>
+        <PageHeading eyebrow="Organización" title="Calendario de viajes" description="Reúne los periodos y las actividades guardadas; los itinerarios antiguos aparecen sin horas asignadas."
+          actions={<Link href="/viajes" className="min-h-11 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white">Gestionar viajes</Link>} />
       )}
       {embedded && <p className="mb-4 text-sm text-slate-600">Vista mensual, semanal o agenda de tus viajes y actividades guardadas.</p>}
 

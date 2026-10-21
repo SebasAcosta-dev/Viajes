@@ -15,7 +15,7 @@ describe("navegación principal", () => {
 
     const navigation = screen.getByRole("navigation");
     const links = [...navigation.querySelectorAll("a")];
-    expect(links.map((link) => link.textContent)).toEqual([
+    expect(links.map((link) => link.querySelector("span:last-child")?.textContent)).toEqual([
       "Inicio", "Mis viajes", "Mapa", "Presupuesto", "Cuenta",
     ]);
     expect(links.map((link) => (link as HTMLAnchorElement).getAttribute("href"))).toEqual([
@@ -49,13 +49,13 @@ describe("navegación principal", () => {
 
     const navigation = screen.getByRole("navigation");
     const toggle = screen.getByRole("button");
-    expect(toggle).toHaveClass("lg:hidden");
-    expect(navigation).toHaveClass("grid-cols-2", "sm:grid-cols-3", "lg:flex-nowrap", "hidden");
-    expect(navigation.parentElement).toHaveClass("lg:flex-nowrap");
+    expect(toggle).toHaveClass("menu-toggle");
+    expect(navigation).toHaveClass("primary-navigation");
+    expect(navigation).not.toHaveClass("is-open");
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(navigation).toHaveClass("grid");
+    expect(navigation).toHaveClass("is-open");
     const mapLink = screen.getByRole("link", { name: "Mapa" });
     mapLink.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(mapLink);

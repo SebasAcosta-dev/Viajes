@@ -65,7 +65,7 @@ export function TripMapClient() {
   const activePointId = points.some((point) => point.id === selectedPointId) ? selectedPointId : null;
 
   return (
-    <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.4fr)]">
+    <section className="map-workspace grid min-w-0 gap-5 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.4fr)]">
       <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <label className="text-sm font-semibold">Viaje

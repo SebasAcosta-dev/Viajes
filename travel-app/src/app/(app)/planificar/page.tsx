@@ -3,6 +3,7 @@ import { destinations, seedTrips } from "@/lib/data/demo-data";
 import { generateItineraryFromTrip } from "@/lib/itinerary";
 import { SaveTripButton } from "@/features/trips/components/save-trip-button";
 import { ManualTripPlanner } from "@/features/itinerary/components/manual-trip-planner";
+import { PageHeading } from "@/components/ui";
 
 const exampleForm = {
   origin: "Madrid",
@@ -23,17 +24,9 @@ export default function PlanificarPage() {
   const itinerary = generateItineraryFromTrip(destination, exampleForm);
 
   return (
-    <main className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Planificación</p>
-          <h1 className="text-3xl font-bold sm:text-4xl">Planificar viaje</h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/destinos" className="min-h-11 rounded-full border border-emerald-700 px-4 py-3 text-sm font-semibold text-emerald-800">Explorar destinos</Link>
-          <Link href="/" className="min-h-11 rounded-full bg-slate-900 px-4 py-3 text-sm font-medium text-white">Volver al inicio</Link>
-        </div>
-      </div>
+    <main className="planner-page mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
+      <PageHeading eyebrow="Tu próxima historia" title="Planifica un viaje" description="Define tus fechas y preferencias. El itinerario se puede revisar antes de guardarlo."
+        actions={<Link href="/destinos" className="min-h-11 rounded-full border border-emerald-700 px-4 py-3 text-sm font-semibold text-emerald-800">Explorar destinos</Link>} />
 
       <ManualTripPlanner />
 

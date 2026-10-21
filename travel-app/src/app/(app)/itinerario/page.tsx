@@ -9,6 +9,7 @@ import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { loadGeneratedItinerary, saveGeneratedItinerary, type GeneratedItineraryDraft } from "@/lib/generated-itinerary";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
 import type { ItineraryItem } from "@/lib/types";
+import { PageHeading } from "@/components/ui";
 
 function money(value: number, currency: ItineraryItem["currency"]): string {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(value);
@@ -212,14 +213,9 @@ export default function ItineraryPage() {
   ).length;
 
   return (
-    <main className="mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Resultado del planificador · {draft.source === "openrouter" ? "OpenRouter · MiniMax" : "Modo demo"}</p>
-          <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Itinerario para {itinerary.destination}</h1>
-        </div>
-        <Link href="/" className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Volver y editar el formulario</Link>
-      </header>
+    <main className="itinerary-page mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
+      <PageHeading eyebrow={`Tu plan · ${draft.source === "openrouter" ? "OpenRouter · MiniMax" : "Modo demo"}`} title={`Itinerario para ${itinerary.destination}`} description="Revisa cada jornada y ajusta los detalles antes de guardar el viaje."
+        actions={<Link href="/" className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Volver y editar el formulario</Link>} />
 
       <section className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 sm:p-6">
         <div><p className="text-xs text-slate-500">Origen → destino</p><p className="font-semibold">{form.origin} → {itinerary.destination}</p></div>

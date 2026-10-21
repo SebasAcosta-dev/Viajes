@@ -5,11 +5,11 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const navItems = [
-  { href: "/", label: "Inicio" },
-  { href: "/viajes", label: "Mis viajes" },
-  { href: "/mapa", label: "Mapa" },
-  { href: "/presupuesto", label: "Presupuesto" },
-  { href: "/cuenta", label: "Cuenta" },
+  { href: "/", label: "Inicio", icon: "⌂" },
+  { href: "/viajes", label: "Mis viajes", icon: "▤" },
+  { href: "/mapa", label: "Mapa", icon: "⌖" },
+  { href: "/presupuesto", label: "Presupuesto", icon: "◉" },
+  { href: "/cuenta", label: "Cuenta", icon: "◌" },
 ];
 
 function getActiveNavigationHref(pathname: string): string {
@@ -27,15 +27,18 @@ export function SiteNavigation() {
   const activeHref = getActiveNavigationHref(pathname);
 
   return (
-    <header className="border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-screen-2xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-4 sm:px-6 lg:flex-nowrap lg:gap-x-8 lg:px-8 2xl:px-10">
-        <Link href="/" className="min-w-0 shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700">
-          <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Viajes</span>
-          <span className="block text-lg font-bold leading-tight text-slate-900 sm:text-xl">Planificador inteligente</span>
+    <header className="site-header">
+      <div className="site-header-inner">
+        <Link href="/" className="brand-lockup" aria-label="Viajes, inicio">
+          <span className="brand-mark" aria-hidden="true">✳</span>
+          <span className="brand-copy">
+            <span className="brand-name">viajes</span>
+            <span className="brand-caption">PLANIFICADOR INTELIGENTE</span>
+          </span>
         </Link>
         <button
           type="button"
-          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 lg:hidden"
+          className="menu-toggle"
           aria-expanded={menuOpen}
           aria-controls="primary-navigation"
           onClick={() => setMenuOpen((open) => !open)}
@@ -46,7 +49,7 @@ export function SiteNavigation() {
         <nav
           id="primary-navigation"
           aria-label="Navegación principal"
-          className={`${menuOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:w-auto lg:flex-1 lg:flex-nowrap lg:justify-end lg:gap-1 xl:gap-2`}
+          className={`primary-navigation ${menuOpen ? "is-open" : ""}`}
         >
           {navItems.map((item) => (
             <Link
@@ -54,16 +57,19 @@ export function SiteNavigation() {
               href={item.href}
               onClick={() => setMenuOpen(false)}
               aria-current={activeHref === item.href ? "page" : undefined}
-              className={`flex min-h-11 min-w-0 items-center justify-center rounded-xl px-2 py-2 text-center text-sm font-semibold leading-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 sm:px-3 lg:flex-none lg:whitespace-nowrap xl:px-3 ${
-                activeHref === item.href
-                  ? "bg-emerald-50 text-emerald-800"
-                  : "text-slate-700 hover:bg-emerald-50 hover:text-emerald-800"
-              }`}
+              className={`primary-navigation-link ${activeHref === item.href ? "is-active" : ""}`}
             >
-              {item.label}
+              <span className="navigation-icon" aria-hidden="true">{item.icon}</span>
+              <span>{item.label}</span>
             </Link>
           ))}
         </nav>
+        <Link href="/cuenta" className="header-account" aria-label="Abrir cuenta">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="8" r="3.25" stroke="currentColor" strokeWidth="1.7" />
+            <path d="M5.5 20c.65-3.3 2.9-5 6.5-5s5.85 1.7 6.5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          </svg>
+        </Link>
       </div>
     </header>
   );

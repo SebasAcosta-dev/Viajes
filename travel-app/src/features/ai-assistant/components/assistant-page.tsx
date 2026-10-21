@@ -11,6 +11,7 @@ import { addIsoDays, formatIsoDate, formatTripPeriod } from "@/lib/date-format";
 import { getBlockTypeLabel } from "@/lib/itinerary-schedule";
 import { normalizeNewDateRange } from "@/lib/trip-dates";
 import { useLocalToday } from "@/lib/hooks/use-local-today";
+import { PageHeading } from "@/components/ui";
 
 const defaultPrompt = "Organiza un viaje barato a Marrakech de cuatro días.";
 
@@ -114,14 +115,9 @@ export default function IaPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Asistente IA</p>
-          <h1 className="text-3xl font-bold sm:text-4xl">Chat de viajes</h1>
-        </div>
-        <Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">Inicio</Link>
-      </div>
+    <main className="assistant-page mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
+      <PageHeading eyebrow="Asistente de viaje" title="Chat de viajes" description="Cuéntame qué tienes en mente y prepararé una propuesta que luego puedes revisar."
+        actions={<Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">Inicio</Link>} />
 
       <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
         <p className="mb-5 max-w-5xl text-base leading-relaxed text-slate-600">

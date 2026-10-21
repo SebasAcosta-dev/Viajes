@@ -1,16 +1,12 @@
 import Link from "next/link";
 import { destinations } from "@/lib/data/demo-data";
+import { PageHeading } from "@/components/ui";
 
 export default function DestinationsPage() {
   return (
-    <main className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Destinos</p>
-          <h1 className="text-3xl font-bold sm:text-4xl">Explorar destinos</h1>
-        </div>
-        <Link href="/" className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white">Volver al inicio</Link>
-      </div>
+    <main className="destinations-page mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
+      <PageHeading eyebrow="Inspiración para tu próxima escapada" title="Explorar destinos" description="Ideas para elegir el ritmo y el lugar de tu próximo viaje."
+        actions={<Link href="/planificar" className="rounded-full bg-emerald-800 px-4 py-2 text-sm font-semibold text-white">Planificar un viaje</Link>} />
 
       <div className="grid min-w-0 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {destinations.map((destination) => (
