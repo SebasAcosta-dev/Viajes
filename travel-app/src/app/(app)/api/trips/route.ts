@@ -1,17 +1,21 @@
 import { persistenceErrorResponse, getAuthenticatedSupabase } from "@/lib/persistence/server";
-import { validateTripDraft } from "@/lib/persistence/validation";
 import type { SavedExpense, SavedTrip, TripDraft } from "@/lib/persistence/types";
 import type { Currency, ItineraryDay, ItineraryItem, TripStatus, TravelType } from "@/lib/types";
 import { normalizeNewTripDates, requestTodayIso } from "@/lib/trip-dates";
+import { fromMinorUnits } from "@/lib/money";
+import { parseJsonBody } from "@/lib/api/http";
+import { tripDraftRequestSchema } from "@/features/trips/api-schemas";
+import { saveTripWithItinerary } from "@/features/trips/services/save-trip-api";
 
 function mapExpense(row: Record<string, unknown>): SavedExpense {
+  const currency = row.currency as Currency;
   return {
     id: String(row.id),
     tripId: String(row.trip_id),
     category: String(row.category),
     description: String(row.description),
-    amount: Number(row.amount),
-    currency: row.currency as Currency,
+    amount: fromMinorUnits(Number(row.amount), currency),
+    currency,
     incurredOn: String(row.incurred_on),
     createdAt: String(row.created_at),
     ...(typeof row.notes === "string" ? { notes: row.notes } : {}),
@@ -20,6 +24,7 @@ function mapExpense(row: Record<string, unknown>): SavedExpense {
 }
 
 function mapActivity(row: Record<string, unknown>): ItineraryItem {
+  const currency = row.currency as Currency;
   return {
     id: String(row.id),
     name: String(row.name),
@@ -33,14 +38,14 @@ function mapActivity(row: Record<string, unknown>): ItineraryItem {
     ...(row.start_time ? { startTime: String(row.start_time).slice(0, 5) } : {}),
     ...(row.end_time ? { endTime: String(row.end_time).slice(0, 5) } : {}),
     durationMinutes: Number(row.duration_minutes),
-    ...(row.estimate !== null ? { estimate: Number(row.estimate) } : {}),
-    ...(row.price_per_person !== null ? { pricePerPerson: Number(row.price_per_person) } : {}),
+    ...(row.estimate !== null ? { estimate: fromMinorUnits(Number(row.estimate), currency) } : {}),
+    ...(row.price_per_person !== null ? { pricePerPerson: fromMinorUnits(Number(row.price_per_person), currency) } : {}),
     priceStatus: row.price_status as ItineraryItem["priceStatus"] ?? (row.estimate === null ? "unknown" : "estimate"),
     ...(typeof row.price_source === "string" ? { priceSource: row.price_source } : {}),
     ...(typeof row.price_checked_at === "string" ? { priceCheckedAt: row.price_checked_at } : {}),
     interestTags: Array.isArray(row.interest_tags) ? row.interest_tags as string[] : [],
     budgetCategory: row.budget_category === "gastronomy" ? "gastronomy" : "activity",
-    currency: row.currency as Currency,
+    currency,
     order: Number(row.sort_order),
     ...(typeof row.latitude === "number" ? { lat: row.latitude } : {}),
     ...(typeof row.longitude === "number" ? { lng: row.longitude } : {}),
@@ -50,6 +55,7 @@ function mapActivity(row: Record<string, unknown>): ItineraryItem {
 }
 
 function mapTrip(row: Record<string, unknown>): SavedTrip {
+  const currency = row.currency as Currency;
   const days = Array.isArray(row.trip_days) ? row.trip_days as Record<string, unknown>[] : [];
   const expenses = Array.isArray(row.expenses) ? row.expenses as Record<string, unknown>[] : [];
   const itinerary: ItineraryDay[] = days
@@ -73,8 +79,8 @@ function mapTrip(row: Record<string, unknown>): SavedTrip {
     startDate: row.start_date ? String(row.start_date) : null,
     endDate: row.end_date ? String(row.end_date) : null,
     travelers: Number(row.travelers),
-    budget: Number(row.budget),
-    currency: row.currency as Currency,
+    budget: fromMinorUnits(Number(row.budget), currency),
+    currency,
     interests: Array.isArray(row.interests) ? row.interests as string[] : [],
     travelType: row.travel_type as TravelType,
     status: row.status as TripStatus,
@@ -132,24 +138,6 @@ function persistedItineraryMatchesDraft(saved: SavedTrip, draft: TripDraft): boo
 
 const tripSelect = "*, trip_days(*, activities(*)), expenses(*)";
 
-function missingMetadataMigration(error: { code?: string; message?: string; details?: string; hint?: string }): string | undefined {
-  const diagnostic = [error.message, error.details, error.hint].filter(Boolean).join(" ");
-  if (!["42703", "PGRST204"].includes(error.code ?? "")) return undefined;
-
-  const activityMetadataColumns = [
-    "price_per_person", "price_status", "price_source", "price_checked_at", "interest_tags", "budget_category",
-  ];
-  if (activityMetadataColumns.some((column) => diagnostic.includes(column))) {
-    return "Faltan columnas de metadatos de actividades. Aplica primero la migración 20261020000200_itinerary_activity_metadata.sql.";
-  }
-
-  const scheduleColumns = ["block_type", "location_label", "travel_minutes", "data_reliability"];
-  if (scheduleColumns.some((column) => diagnostic.includes(column))) {
-    return "Faltan columnas de horario. Aplica la migración 20261020000300_itinerary_schedule.sql después de 20261020000200_itinerary_activity_metadata.sql.";
-  }
-  return undefined;
-}
-
 export async function GET(request: Request) {
   try {
     const { supabase, user } = await getAuthenticatedSupabase();
@@ -168,7 +156,7 @@ export async function GET(request: Request) {
         status: String(row.status),
         startDate: typeof row.start_date === "string" ? row.start_date : null,
         endDate: typeof row.end_date === "string" ? row.end_date : null,
-        budget: Number(row.budget),
+        budget: fromMinorUnits(Number(row.budget), row.currency as Currency),
         currency: row.currency as Currency,
       }));
       return Response.json({ trips });
@@ -186,51 +174,18 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { supabase, user } = await getAuthenticatedSupabase();
-    const body: unknown = await request.json().catch(() => null);
-    const parsedDraft = validateTripDraft(body);
-    if (!parsedDraft) return Response.json({ error: "Los datos del viaje o itinerario no son válidos." }, { status: 400 });
+    const parsedBody = await parseJsonBody(request, tripDraftRequestSchema, "El cuerpo de la solicitud debe ser JSON válido.");
+    if (!parsedBody.ok) return parsedBody.response;
+    const parsedDraft = parsedBody.data;
     const draft = normalizeNewTripDates(parsedDraft, requestTodayIso(request));
-    const requiresScheduleColumns = draft.itinerary.some((day) => day.items.some((item) =>
-      item.blockType !== undefined || item.location !== undefined || item.travelMinutes !== undefined || item.reliability !== undefined,
-    ));
-    const metadataColumns = "price_per_person,price_status,price_source,price_checked_at,interest_tags,budget_category";
-    const scheduleColumns = ",block_type,location_label,travel_minutes,data_reliability";
-    const { error: schemaError } = await supabase
-      .from("activities")
-      .select(`${metadataColumns}${requiresScheduleColumns ? scheduleColumns : ""}`)
-      .limit(0);
-    if (schemaError) {
-      const migrationError = missingMetadataMigration(schemaError);
-      if (migrationError) return Response.json({ error: migrationError }, { status: 503 });
-      console.error("Trip metadata schema check failed", {
-        code: schemaError.code ?? "unknown",
-        message: schemaError.message.slice(0, 200),
-      });
-      throw schemaError;
+    const result = await saveTripWithItinerary(supabase, user.id, draft);
+    if (result.kind === "missing-migration") {
+      return Response.json({ error: result.message }, { status: 503 });
     }
-
-    const { data: tripId, error: createError } = await supabase.rpc("create_trip_with_itinerary", {
-      trip_payload: draft,
-    });
-    if (createError) {
-      if (createError.code === "PGRST202" && createError.message.includes("create_trip_with_itinerary")) {
-        return Response.json({
-          error: "La función de guardado no está disponible. Aplica las migraciones 20261020000200_itinerary_activity_metadata.sql y 20261020000300_itinerary_schedule.sql en ese orden y actualiza el esquema de Supabase.",
-        }, { status: 503 });
-      }
-      throw createError;
-    }
-    if (typeof tripId !== "string" || !tripId) {
+    if (result.kind === "not-confirmed") {
       return Response.json({ error: "Supabase no confirmó la creación del viaje." }, { status: 502 });
     }
-    const { data, error } = await supabase.from("trips").select(tripSelect)
-      .eq("id", tripId)
-      .eq("user_id", user.id)
-      .single();
-    if (error) {
-      throw error;
-    }
-    const savedTrip = mapTrip(data as Record<string, unknown>);
+    const savedTrip = mapTrip(result.row);
     if (!persistedItineraryMatchesDraft(savedTrip, draft)) {
       return Response.json({ error: "Supabase no confirmó todos los días, actividades y horarios del itinerario." }, { status: 502 });
     }

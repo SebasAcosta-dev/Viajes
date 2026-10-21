@@ -12,7 +12,7 @@ vi.mock("@/lib/persistence/server", () => ({
   ),
 }));
 
-import { PATCH } from "@/app/(app)/api/trips/[tripId]/route";
+import { DELETE, PATCH } from "@/app/(app)/api/trips/[tripId]/route";
 import { dateInTimeZone } from "@/lib/trip-dates";
 import { addIsoDays } from "@/lib/date-format";
 
@@ -22,6 +22,7 @@ function setup(existing: { start_date: string | null; end_date: string | null } 
   const tripQuery = {
     select: vi.fn().mockReturnThis(),
     update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({
       data: existing ? {
@@ -32,7 +33,7 @@ function setup(existing: { start_date: string | null; end_date: string | null } 
         origin: "",
         destination: "Marrakech",
         travelers: 1,
-        budget: 100,
+        budget: 10000,
         currency: "EUR",
         status: "borrador",
       } : null,
@@ -82,7 +83,7 @@ describe("PATCH /api/trips/[tripId]", () => {
     const response = await PATCH(patch({ budget: 125 }), { params: Promise.resolve({ tripId: "trip-1" }) });
 
     expect(response.status).toBe(200);
-    expect(tripQuery.update).toHaveBeenCalledWith({ budget: 125 });
+    expect(tripQuery.update).toHaveBeenCalledWith({ budget: 12500 });
     expect(tripQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
   });
 
@@ -94,5 +95,28 @@ describe("PATCH /api/trips/[tripId]", () => {
     expect(response.status).toBe(404);
     expect(tripQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("elimina únicamente un viaje del usuario autenticado", async () => {
+    const { tripQuery } = setup({ start_date: today, end_date: today });
+    const response = await DELETE(new Request("http://localhost/api/trips/trip-1", { method: "DELETE" }), {
+      params: Promise.resolve({ tripId: "trip-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ deleted: true });
+    expect(tripQuery.delete).toHaveBeenCalledOnce();
+    expect(tripQuery.eq).toHaveBeenNthCalledWith(1, "id", "trip-1");
+    expect(tripQuery.eq).toHaveBeenNthCalledWith(2, "user_id", "user-1");
+  });
+
+  it("devuelve 404 cuando el usuario intenta eliminar un viaje ajeno", async () => {
+    const { tripQuery } = setup(null);
+    const response = await DELETE(new Request("http://localhost/api/trips/trip-1", { method: "DELETE" }), {
+      params: Promise.resolve({ tripId: "trip-1" }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(tripQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
   });
 });

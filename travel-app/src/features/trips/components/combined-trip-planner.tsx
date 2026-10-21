@@ -5,6 +5,7 @@ import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { createTripGroup, listTrips, listTripGroups } from "@/lib/persistence/client";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
 import { getTripBudgetSummary } from "@/lib/itinerary";
+import { sumAmountsInMinorUnits } from "@/lib/money";
 import type { SavedTrip, SavedTripGroup, TripGroupItem } from "@/lib/persistence/types";
 
 interface SelectedTrip extends TripGroupItem {
@@ -221,10 +222,10 @@ export function CombinedTripPlanner() {
               <dl className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 {currencies.map((currency) => {
                   const currencyTrips = items.filter(({ trip }) => trip.currency === currency);
-                  const budget = currencyTrips.reduce((sum, { trip }) => sum + trip.budget, 0);
+                  const budget = sumAmountsInMinorUnits(currencyTrips.map(({ trip }) => trip.budget), currency);
                   const summaries = currencyTrips.map(({ trip }) => getTripBudgetSummary(trip));
-                  const actual = summaries.reduce((sum, summary) => sum + summary.actualExpenses, 0);
-                  const estimated = summaries.reduce((sum, summary) => sum + summary.totalEstimated, 0);
+                  const actual = sumAmountsInMinorUnits(summaries.map((summary) => summary.actualExpenses), currency);
+                  const estimated = sumAmountsInMinorUnits(summaries.map((summary) => summary.totalEstimated), currency);
                   return <div key={currency} className="rounded-xl border border-slate-200 p-3 text-sm">
                     <dt className="font-semibold">{currency} · presupuesto {money(budget, currency)}</dt>
                     <dd>Gastos {money(actual, currency)} · estimado pendiente {money(estimated, currency)}</dd>

@@ -1,27 +1,16 @@
 import { persistenceErrorResponse, getAuthenticatedSupabase } from "@/lib/persistence/server";
-import { profilePreferencesFromRow, validateProfilePreferences } from "@/lib/profile-preferences";
+import { parseJsonBody } from "@/lib/api/http";
+import { profilePreferencesRequestSchema } from "@/features/account/api-schemas";
+import { readProfilePreferences, writeProfilePreferences } from "@/features/account/services/profile-api";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function mapPreferences(row: unknown) {
-  const preferences = profilePreferencesFromRow(row);
-  if (!preferences) throw new Error("Los datos del perfil no tienen un formato compatible.");
-  return preferences;
-}
+const profileMissingMessage = "No se encontr\u00f3 el perfil de esta cuenta.";
 
 export async function GET() {
   try {
     const { supabase, user } = await getAuthenticatedSupabase();
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("display_name,preferences,currency,language")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return Response.json({ error: "No se encontró el perfil de esta cuenta." }, { status: 404 });
-    return Response.json({ preferences: mapPreferences(data) });
+    const preferences = await readProfilePreferences(supabase, user.id);
+    if (!preferences) return Response.json({ error: profileMissingMessage, code: "NOT_FOUND" }, { status: 404 });
+    return Response.json({ preferences });
   } catch (error) {
     return persistenceErrorResponse(error, "profile.read");
   }
@@ -30,37 +19,11 @@ export async function GET() {
 export async function PUT(request: Request) {
   try {
     const { supabase, user } = await getAuthenticatedSupabase();
-    const body: unknown = await request.json().catch(() => null);
-    const preferences = validateProfilePreferences(body);
-    if (!preferences) return Response.json({ error: "Las preferencias del perfil no son válidas." }, { status: 400 });
-    const { data: current, error: readError } = await supabase
-      .from("profiles")
-      .select("preferences")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (readError) throw readError;
-    if (!current) return Response.json({ error: "No se encontró el perfil de esta cuenta." }, { status: 404 });
-    const existingPreferences = isRecord(current.preferences) ? current.preferences : {};
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({
-        display_name: preferences.name,
-        preferences: {
-          ...existingPreferences,
-          interests: preferences.interests,
-          pace: preferences.pace,
-          budgetPreference: preferences.budgetPreference,
-          travelTypes: preferences.travelTypes,
-        },
-        currency: preferences.currency,
-        language: preferences.language,
-      })
-      .eq("id", user.id)
-      .select("display_name,preferences,currency,language")
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return Response.json({ error: "No se encontró el perfil de esta cuenta." }, { status: 404 });
-    return Response.json({ preferences: mapPreferences(data) });
+    const parsed = await parseJsonBody(request, profilePreferencesRequestSchema, "El cuerpo de la solicitud debe ser JSON v\u00e1lido.");
+    if (!parsed.ok) return parsed.response;
+    const preferences = await writeProfilePreferences(supabase, user.id, parsed.data);
+    if (!preferences) return Response.json({ error: profileMissingMessage, code: "NOT_FOUND" }, { status: 404 });
+    return Response.json({ preferences });
   } catch (error) {
     return persistenceErrorResponse(error, "profile.update");
   }

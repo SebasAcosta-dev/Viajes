@@ -6,6 +6,7 @@ import { addExpense, deleteExpense, deleteTrip, listTrips, persistenceLabel, reo
 import { calculateScheduledEnd, getBlockTypeLabel } from "@/lib/itinerary-schedule";
 import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { getTripBudgetSummary } from "@/lib/itinerary";
+import { sumAmountsInMinorUnits } from "@/lib/money";
 import { TripCalendar } from "@/features/calendar/components/trip-calendar";
 import type { SavedExpense, SavedTrip } from "@/lib/persistence/types";
 import type { Currency, ItineraryDay, TripStatus } from "@/lib/types";
@@ -728,10 +729,13 @@ export function TripsManager({ view }: { view: View }) {
           {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => {
             const currencyTrips = filteredTrips.filter((trip) => trip.currency === currency);
             if (!currencyTrips.length) return null;
-            const totals = currencyTrips.reduce((sum, trip) => {
-              const summary = getTripBudgetSummary(trip);
-              return { budget: sum.budget + trip.budget, actual: sum.actual + summary.actualExpenses, estimate: sum.estimate + summary.totalEstimated, unknown: sum.unknown + summary.unknownActivityPrices };
-            }, { budget: 0, actual: 0, estimate: 0, unknown: 0 });
+            const summaries = currencyTrips.map(getTripBudgetSummary);
+            const totals = {
+              budget: sumAmountsInMinorUnits(currencyTrips.map((trip) => trip.budget), currency),
+              actual: sumAmountsInMinorUnits(summaries.map((summary) => summary.actualExpenses), currency),
+              estimate: sumAmountsInMinorUnits(summaries.map((summary) => summary.totalEstimated), currency),
+              unknown: summaries.reduce((sum, summary) => sum + summary.unknownActivityPrices, 0),
+            };
             return <dl key={currency} className="rounded-2xl border border-slate-200 bg-white p-4">
               <dt className="font-semibold">Resumen agregado · {currency} · {currencyTrips.length} viajes</dt>
               <dd className="mt-2 grid grid-cols-2 gap-2 text-sm"><span>Presupuesto {money(totals.budget, currency)}</span><span>Gastos {money(totals.actual, currency)}</span><span>Estimado pendiente {money(totals.estimate, currency)}</span><span>Precios desconocidos {totals.unknown}</span></dd>

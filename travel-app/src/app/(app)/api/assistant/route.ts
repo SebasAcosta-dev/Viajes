@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { AssistantProviderError, generateTravelAssistantReply, type AssistantContext } from "@/lib/ai";
 import type { Currency } from "@/lib/types";
 import { requestTodayIso } from "@/lib/trip-dates";
+import { z } from "zod";
+import { parseJsonBody } from "@/lib/api/http";
 
 const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
+const assistantRequestSchema = z.object({
+  message: z.string().trim().min(1, "Debes indicar una solicitud de viaje.").max(2000, "La solicitud no puede superar los 2000 caracteres."),
+  context: z.unknown().optional(),
+}).strict();
 
 function isValidIsoDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -57,27 +63,10 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
 }
 
 export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "El cuerpo de la solicitud debe ser JSON válido." }, { status: 400 });
-  }
-
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return NextResponse.json({ error: "El cuerpo de la solicitud no es válido." }, { status: 400 });
-  }
-
-  const input = body as Record<string, unknown>;
-  const message = typeof input.message === "string" ? input.message.trim() : "";
-  if (!message || message.length > 2000) {
-    return NextResponse.json(
-      { error: message ? "La solicitud no puede superar los 2000 caracteres." : "Debes indicar una solicitud de viaje." },
-      { status: 400 },
-    );
-  }
-
-  const context = parseContext(input.context, requestTodayIso(request));
+  const parsed = await parseJsonBody(request, assistantRequestSchema, "El cuerpo de la solicitud debe ser JSON válido.");
+  if (!parsed.ok) return parsed.response;
+  const { message, context: rawContext } = parsed.data;
+  const context = parseContext(rawContext, requestTodayIso(request));
   if (!context) {
     return NextResponse.json({ error: "El contexto del viaje no tiene un formato válido." }, { status: 400 });
   }

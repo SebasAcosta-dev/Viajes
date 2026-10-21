@@ -1,4 +1,5 @@
 import { Currency, Destination, ItineraryDay, ItineraryItem, TripFormValues } from "@/lib/types";
+import { addMinorUnits, fromMinorUnits, toMinorUnits } from "@/lib/money";
 
 const interestKeywords: Record<string, string[]> = {
   "historia": ["histor", "medina", "palacio", "monumento", "ruina", "museo", "patrimonio"],
@@ -128,20 +129,17 @@ export function getTripBudgetSummary(trip: {
       .filter((expense) => expense.currency === trip.currency && expense.activityId)
       .map((expense) => expense.activityId as string),
   );
-  const totalEstimated = trip.itinerary.reduce(
-    (sum, day) => sum + day.items.reduce(
-      (daySum, item) => daySum + (
-        (item.blockType === undefined || item.blockType === "activity")
-        && item.budgetCategory !== "gastronomy"
-        && item.currency === trip.currency
-        && !realizedActivityIds.has(item.id)
-        && item.priceStatus !== "unknown"
-          ? item.estimate ?? 0
-          : 0
-      ),
-      0,
-    ),
-    0,
+  const totalEstimatedMinor = trip.itinerary.reduce(
+    (sum, day) => day.items.reduce((daySum, item) => (
+      (item.blockType === undefined || item.blockType === "activity")
+      && item.budgetCategory !== "gastronomy"
+      && item.currency === trip.currency
+      && !realizedActivityIds.has(item.id)
+      && item.priceStatus !== "unknown"
+        ? addMinorUnits(daySum, toMinorUnits(item.estimate ?? 0, trip.currency))
+        : daySum
+    ), sum),
+    0 as ReturnType<typeof toMinorUnits>,
   );
   const unknownActivityPrices = trip.itinerary.flatMap((day) => day.items).filter((item) =>
     (item.blockType === undefined || item.blockType === "activity")
@@ -153,18 +151,21 @@ export function getTripBudgetSummary(trip: {
       || item.priceStatus !== "free_verified" && (item.estimate === undefined || item.estimate === 0)
     )
   ).length;
-  const actualExpenses = (trip.expenses ?? [])
+  const actualExpensesMinor = (trip.expenses ?? [])
     .filter((expense) => expense.currency === trip.currency)
-    .reduce((sum, expense) => sum + expense.amount, 0);
+    .reduce((sum, expense) => addMinorUnits(sum, toMinorUnits(expense.amount, trip.currency)), 0 as ReturnType<typeof toMinorUnits>);
+  const budgetMinor = toMinorUnits(trip.budget, trip.currency);
+  const totalEstimated = fromMinorUnits(totalEstimatedMinor, trip.currency);
+  const actualExpenses = fromMinorUnits(actualExpensesMinor, trip.currency);
 
   const totalDays = trip.itinerary.length || 1;
   return {
-    totalEstimated: Number(totalEstimated.toFixed(2)),
+    totalEstimated,
     avgPerPerson: Number((totalEstimated / Math.max(trip.travelers, 1)).toFixed(2)),
     dailyAvg: Number((totalEstimated / totalDays).toFixed(2)),
-    actualExpenses: Number(actualExpenses.toFixed(2)),
-    remainingBudget: Number((trip.budget - actualExpenses).toFixed(2)),
-    projectedRemaining: Number((trip.budget - actualExpenses - totalEstimated).toFixed(2)),
+    actualExpenses,
+    remainingBudget: fromMinorUnits(budgetMinor - actualExpensesMinor, trip.currency),
+    projectedRemaining: fromMinorUnits(budgetMinor - actualExpensesMinor - totalEstimatedMinor, trip.currency),
     unknownActivityPrices,
     projectionIncomplete: unknownActivityPrices > 0,
   };
