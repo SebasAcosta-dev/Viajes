@@ -67,6 +67,28 @@ describe("autorización Supabase", () => {
         code: "42501",
       });
     });
+
+    it("identifies PGRST205 and records only the configured Supabase host", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+      const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+      const response = persistenceErrorResponse({
+        code: "PGRST205",
+        message: "Could not find the table 'public.activities' in the schema cache",
+      }, "trips.create");
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.error).toContain("public.activities");
+      expect(body.error).toContain("NEXT_PUBLIC_SUPABASE_URL");
+      expect(logger).toHaveBeenCalledWith("[supabase-persistence-error]", {
+        operation: "trips.create",
+        code: "PGRST205",
+        schema: "public",
+        table: "activities",
+        supabaseHost: "project-ref.supabase.co",
+      });
+      expect(JSON.stringify(logger.mock.calls)).not.toContain("publishable");
+    });
   });
 
   it("falla cerrado con token expirado y clasifica la sesión como inválida", async () => {
@@ -141,5 +163,14 @@ describe("autorización Supabase", () => {
     expect(replaceDay).toContain("expense.user_id = auth.uid()");
     expect(replaceDay).toContain("expense.activity_id is null");
     expect(replaceDay).not.toMatch(/delete\s+from\s+public\.expenses/i);
+  });
+
+  it("concede acceso a Data API solo tras verificar RLS en las tablas del producto", () => {
+    const migration = readFileSync(resolve(process.cwd(), "supabase", "migrations", "20261021000100_data_api_table_grants.sql"), "utf8");
+    expect(migration).toContain("where relation.oid is null or not relation.relrowsecurity");
+    expect(migration).toContain("grant select, insert, update, delete on table public.trips, public.trip_days, public.activities, public.expenses to authenticated");
+    expect(migration).toContain("grant select, insert, update, delete on table public.trip_groups, public.trip_group_items to authenticated");
+    expect(migration).toContain("notify pgrst, 'reload schema'");
+    expect(migration).not.toMatch(/disable row level security|service_role|drop policy/i);
   });
 });

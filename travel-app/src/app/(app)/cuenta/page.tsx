@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getPersistenceMode } from "@/lib/persistence/mode";
@@ -10,8 +10,41 @@ import { ProfilePreferencesForm } from "@/features/account/components/profile-pr
 import { DeviceTripImport } from "@/features/trips/components/device-trip-import";
 import { setVisitorLocalMode } from "@/lib/persistence/mode";
 import { getAuthCallbackUrl } from "@/lib/supabase/auth-redirect";
+import { getPublicEnvironment } from "@/lib/env";
 
 type AuthAction = "signin" | "signup";
+type AccountTab = "access" | "preferences" | "favorites";
+const accountTabChangeEvent = "viajes:account-tab-change";
+
+function getAccountTabSnapshot(): AccountTab {
+  if (typeof window === "undefined") return "access";
+  const requestedTab = new URL(window.location.href).searchParams.get("tab");
+  return requestedTab === "preferences" || requestedTab === "favorites" ? requestedTab : "access";
+}
+
+function subscribeToAccountTab(onChange: () => void) {
+  window.addEventListener("popstate", onChange);
+  window.addEventListener(accountTabChangeEvent, onChange);
+  return () => {
+    window.removeEventListener("popstate", onChange);
+    window.removeEventListener(accountTabChangeEvent, onChange);
+  };
+}
+
+function notifyAccountTabChange() {
+  window.dispatchEvent(new Event(accountTabChangeEvent));
+}
+
+function clearAuthResultFromUrl(url: URL) {
+  const cleanUrl = new URL(url.pathname, url.origin);
+  const requestedTab = url.searchParams.get("tab");
+  if (requestedTab === "preferences" || requestedTab === "favorites") {
+    cleanUrl.searchParams.set("tab", requestedTab);
+  }
+  window.history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}`);
+  notifyAccountTabChange();
+}
+
 type AuthFormState = {
   email: string;
   password: string;
@@ -65,24 +98,21 @@ export default function AccountPage() {
   const authEventReceivedRef = useRef(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"access" | "preferences" | "favorites">("access");
+  const activeTab = useSyncExternalStore(subscribeToAccountTab, getAccountTabSnapshot, () => "access");
   const supabaseMode = getPersistenceMode() === "supabase";
-  const supabaseConfigured = Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
-  );
+  const publicEnvironment = getPublicEnvironment();
+  const supabaseConfigured = Boolean(publicEnvironment.supabaseUrl && publicEnvironment.supabasePublishableKey);
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const requestedTab = url.searchParams.get("tab");
-    if (requestedTab === "preferences" || requestedTab === "favorites") setActiveTab(requestedTab);
     const authResult = url.searchParams.get("auth");
     let statusUpdate: number | undefined;
     if (authResult === "confirmed") {
       statusUpdate = window.setTimeout(() => setMessage("Correo confirmado. Ya puedes iniciar sesión."), 0);
-      window.history.replaceState(null, "", url.pathname);
+      clearAuthResultFromUrl(url);
     } else if (authResult === "confirmation_error") {
       statusUpdate = window.setTimeout(() => setError("No se pudo confirmar el correo. El enlace puede haber caducado; solicita un nuevo correo de confirmación."), 0);
-      window.history.replaceState(null, "", url.pathname);
+      clearAuthResultFromUrl(url);
     }
     return () => {
       if (statusUpdate !== undefined) window.clearTimeout(statusUpdate);
@@ -127,16 +157,17 @@ export default function AccountPage() {
     setMessage("");
     try {
       const supabase = createSupabaseBrowserClient();
+      const authEnvironment = getPublicEnvironment();
       const result = action === "signin"
         ? await supabase.auth.signInWithPassword({ email: credentials.email, password: credentials.password })
         : await supabase.auth.signUp({
           email: credentials.email,
           password: credentials.password,
           options: {
-            emailRedirectTo: getAuthCallbackUrl(window.location.origin, process.env.NEXT_PUBLIC_SITE_URL, {
-              environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
-              url: process.env.NEXT_PUBLIC_VERCEL_URL,
-              productionUrl: process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL,
+            emailRedirectTo: getAuthCallbackUrl(window.location.origin, authEnvironment.siteUrl, {
+              environment: authEnvironment.vercelEnvironment,
+              url: authEnvironment.vercelUrl,
+              productionUrl: authEnvironment.vercelProductionUrl,
             }),
           },
         });
@@ -168,14 +199,15 @@ export default function AccountPage() {
     }
     updateAuthForm("signin", { error: "", message: "", loading: true });
     try {
+      const authEnvironment = getPublicEnvironment();
       const { error: resendError } = await createSupabaseBrowserClient().auth.resend({
         type: "signup",
         email,
         options: {
-          emailRedirectTo: getAuthCallbackUrl(window.location.origin, process.env.NEXT_PUBLIC_SITE_URL, {
-            environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
-            url: process.env.NEXT_PUBLIC_VERCEL_URL,
-            productionUrl: process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL,
+          emailRedirectTo: getAuthCallbackUrl(window.location.origin, authEnvironment.siteUrl, {
+            environment: authEnvironment.vercelEnvironment,
+            url: authEnvironment.vercelUrl,
+            productionUrl: authEnvironment.vercelProductionUrl,
           }),
         },
       });
@@ -225,11 +257,11 @@ export default function AccountPage() {
             type="button"
             aria-current={activeTab === tab ? "page" : undefined}
             onClick={() => {
-              setActiveTab(tab);
               const url = new URL(window.location.href);
               if (tab === "access") url.searchParams.delete("tab");
               else url.searchParams.set("tab", tab);
               window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+              notifyAccountTabChange();
             }}
             className={`min-h-11 rounded-full border px-4 py-2 text-sm font-semibold ${activeTab === tab ? "border-emerald-800 bg-emerald-800 text-white" : "border-slate-300 bg-white text-slate-800"}`}
           >{label}</button>

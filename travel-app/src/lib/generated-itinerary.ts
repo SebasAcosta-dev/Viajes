@@ -1,3 +1,4 @@
+import { localPersistenceAdapter } from "@/lib/persistence/local-adapter";
 import type { ItineraryPlan } from "@/lib/ai";
 import type { TripFormValues } from "@/lib/types";
 
@@ -17,13 +18,13 @@ function scopedStorageKey(key: string, scope: string): string {
 }
 
 export function saveGeneratedItinerary(draft: GeneratedItineraryDraft, scope = "anonymous"): void {
-  localStorage.setItem(scopedStorageKey(STORAGE_KEY, scope), JSON.stringify(draft));
+  localPersistenceAdapter.setItem(scopedStorageKey(STORAGE_KEY, scope), JSON.stringify(draft));
 }
 
 export function loadGeneratedItinerary(scope = "anonymous"): GeneratedItineraryDraft | null {
   const key = scopedStorageKey(STORAGE_KEY, scope);
-  const serialized = localStorage.getItem(key) ??
-    (scope === "anonymous" ? localStorage.getItem(STORAGE_KEY) : null);
+  const serialized = localPersistenceAdapter.getItem(key) ??
+    (scope === "anonymous" ? localPersistenceAdapter.getItem(STORAGE_KEY) : null);
   if (!serialized) return null;
   try {
     const value: unknown = JSON.parse(serialized);
@@ -45,13 +46,13 @@ export function loadGeneratedItinerary(scope = "anonymous"): GeneratedItineraryD
 export function saveTripFormDraft(form: TripFormValues, scope = "anonymous"): void {
   const isAnonymous = scope === "anonymous" || scope.startsWith("anonymous:");
   const value = isAnonymous ? form : { ...form, interests: [] };
-  localStorage.setItem(scopedStorageKey(FORM_STORAGE_KEY, scope), JSON.stringify(value));
+  localPersistenceAdapter.setItem(scopedStorageKey(FORM_STORAGE_KEY, scope), JSON.stringify(value));
 }
 
 export function loadTripFormDraft(scope = "anonymous"): TripFormValues | null {
   const key = scopedStorageKey(FORM_STORAGE_KEY, scope);
-  const serialized = localStorage.getItem(key) ??
-    (scope === "anonymous" ? localStorage.getItem(FORM_STORAGE_KEY) : null);
+  const serialized = localPersistenceAdapter.getItem(key) ??
+    (scope === "anonymous" ? localPersistenceAdapter.getItem(FORM_STORAGE_KEY) : null);
   if (!serialized) return null;
   try {
     const value: unknown = JSON.parse(serialized);

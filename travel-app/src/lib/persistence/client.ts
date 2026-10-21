@@ -6,6 +6,7 @@ import { getPersistenceMode, isVisitorLocalMode, setVisitorLocalMode } from "@/l
 import { localTodayIso, normalizeNewTripDates } from "@/lib/trip-dates";
 import type { ItineraryDay, ItineraryItem } from "@/lib/types";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
+import { LOCAL_DATA_CORRUPTION_MESSAGE, localPersistenceAdapter } from "@/lib/persistence/local-adapter";
 
 const TRIPS_KEY = "viajes.persisted.trips.v1";
 const FAVORITES_KEY = "viajes.persisted.favorites.v1";
@@ -16,13 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readStored<T>(key: string, fallback: T): T {
-  const serialized = localStorage.getItem(key);
-  if (!serialized) return fallback;
-  try {
-    return JSON.parse(serialized) as T;
-  } catch {
-    throw new Error("Los datos locales están dañados y no se han sobrescrito. Borra el almacenamiento de Viajes para reiniciar el modo demo.");
-  }
+  return localPersistenceAdapter.readJson(key, fallback, LOCAL_DATA_CORRUPTION_MESSAGE);
 }
 
 function demoTrips(): SavedTrip[] {
@@ -130,7 +125,7 @@ export async function saveTrip(draft: TripDraft): Promise<SavedTrip> {
   }
   const now = new Date().toISOString();
   const trip = normalizedDraft(normalizedTripDraft, newId(), now);
-  localStorage.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
   return trip;
 }
 
@@ -159,7 +154,7 @@ export async function updateTrip(id: string, changes: TripUpdates): Promise<void
       date: changes.startDate ? new Date(Date.parse(`${changes.startDate}T00:00:00Z`) + (day.dayNumber - 1) * 86_400_000).toISOString().slice(0, 10) : undefined,
     }));
   }
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function deleteTrip(id: string): Promise<void> {
@@ -168,7 +163,7 @@ export async function deleteTrip(id: string): Promise<void> {
     if (result.deleted !== true) throw new Error("El servidor no confirmó la eliminación del viaje.");
     return;
   }
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(demoTrips().filter((trip) => trip.id !== id)));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(demoTrips().filter((trip) => trip.id !== id)));
 }
 
 export async function updateActivity(tripId: string, activity: ItineraryItem): Promise<void> {
@@ -194,7 +189,7 @@ export async function updateActivity(tripId: string, activity: ItineraryItem): P
   }));
   if (!found) throw new Error("No se encontró la actividad.");
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function reorderActivities(tripId: string, dayId: string, activityIds: string[]): Promise<void> {
@@ -217,7 +212,7 @@ export async function reorderActivities(tripId: string, dayId: string, activityI
   const items = new Map(day.items.map((activity) => [activity.id, activity]));
   day.items = activityIds.map((id, index) => ({ ...items.get(id)!, order: index + 1 }));
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function replaceTripDay(tripId: string, dayNumber: number, day: ItineraryDay): Promise<void> {
@@ -236,7 +231,7 @@ export async function replaceTripDay(tripId: string, dayNumber: number, day: Iti
   if (index < 0 || day.dayNumber !== dayNumber) throw new Error("No se encontró la jornada que se va a sustituir.");
   trip.itinerary[index] = day;
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function listFavorites(): Promise<FavoriteDestination[]> {
@@ -267,7 +262,7 @@ export async function toggleFavorite(destinationSlug: string, destinationName: s
   const next = existing
     ? favorites.filter((favorite) => favorite.id !== existing.id)
     : [...favorites, { id: newId(), destinationSlug, destinationName, createdAt: new Date().toISOString() }];
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+  localPersistenceAdapter.setItem(FAVORITES_KEY, JSON.stringify(next));
   return next;
 }
 
@@ -291,7 +286,7 @@ export async function addExpense(
   const result = { ...expense, id: newId(), tripId, createdAt: new Date().toISOString() };
   trip.expenses.push(result);
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
   return result;
 }
 
@@ -316,7 +311,7 @@ export async function updateExpense(
   if (!trip || !existing) throw new Error("No se encontró el gasto.");
   Object.assign(existing, expense);
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function deleteExpense(tripId: string, expenseId: string): Promise<void> {
@@ -333,7 +328,7 @@ export async function deleteExpense(tripId: string, expenseId: string): Promise<
   if (!trip || !trip.expenses.some((entry) => entry.id === expenseId)) throw new Error("No se encontró el gasto.");
   trip.expenses = trip.expenses.filter((entry) => entry.id !== expenseId);
   trip.updatedAt = new Date().toISOString();
-  localStorage.setItem(TRIPS_KEY, JSON.stringify(trips));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
 export async function listTripGroups(): Promise<SavedTripGroup[]> {
@@ -369,7 +364,7 @@ export async function createTripGroup(
     items: items.map((item, index) => ({ ...item, sortOrder: index + 1 })),
     createdAt: new Date().toISOString(),
   };
-  localStorage.setItem(TRIP_GROUPS_KEY, JSON.stringify([group, ...await listTripGroups()]));
+  localPersistenceAdapter.setItem(TRIP_GROUPS_KEY, JSON.stringify([group, ...await listTripGroups()]));
   return group;
 }
 
@@ -383,7 +378,7 @@ export function saveTripToDevice(draft: TripDraft): SavedTrip {
   setVisitorLocalMode(true);
   const now = new Date().toISOString();
   const trip = normalizedDraft(normalizeNewTripDates(draft, localTodayIso()), newId(), now);
-  localStorage.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify([trip, ...demoTrips()]));
   return trip;
 }
 
@@ -419,7 +414,7 @@ export async function importDeviceTripsToAccount(): Promise<{ imported: number; 
     const signature = importSignature(trip);
     if (existingTrips.some((existing) => importSignature(existing) === signature)) {
       progress[trip.id] = true;
-      localStorage.setItem(progressKey, JSON.stringify(progress));
+      localPersistenceAdapter.setItem(progressKey, JSON.stringify(progress));
       continue;
     }
     await saveTrip({
@@ -437,7 +432,7 @@ export async function importDeviceTripsToAccount(): Promise<{ imported: number; 
       itinerary: trip.itinerary,
     });
     progress[trip.id] = true;
-    localStorage.setItem(progressKey, JSON.stringify(progress));
+    localPersistenceAdapter.setItem(progressKey, JSON.stringify(progress));
     existingTrips.push(trip);
     imported += 1;
   }

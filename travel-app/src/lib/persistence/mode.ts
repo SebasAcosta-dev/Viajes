@@ -1,21 +1,19 @@
 import type { PersistenceMode } from "@/lib/persistence/types";
+import { getPublicEnvironment } from "@/lib/env";
+import { localPersistenceAdapter } from "@/lib/persistence/local-adapter";
 
 const VISITOR_MODE_KEY = "viajes.storage-mode.v1";
 
 export function getPersistenceMode(): PersistenceMode {
-  const mode = process.env.NEXT_PUBLIC_DATA_MODE ?? "demo";
-  if (mode !== "demo" && mode !== "supabase") {
-    throw new Error("NEXT_PUBLIC_DATA_MODE debe ser demo o supabase.");
-  }
-  return mode;
+  return getPublicEnvironment().dataMode;
 }
 
 export function isVisitorLocalMode(): boolean {
-  return typeof window !== "undefined" && window.localStorage.getItem(VISITOR_MODE_KEY) === "visitor";
+  return typeof window !== "undefined" && localPersistenceAdapter.getItem(VISITOR_MODE_KEY) === "visitor";
 }
 
 export function setVisitorLocalMode(enabled: boolean): void {
   if (typeof window === "undefined") return;
-  if (enabled) window.localStorage.setItem(VISITOR_MODE_KEY, "visitor");
-  else window.localStorage.removeItem(VISITOR_MODE_KEY);
+  if (enabled) localPersistenceAdapter.setItem(VISITOR_MODE_KEY, "visitor");
+  else localPersistenceAdapter.removeItem(VISITOR_MODE_KEY);
 }

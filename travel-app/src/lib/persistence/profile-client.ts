@@ -5,21 +5,25 @@ import { getPersistenceMode, setVisitorLocalMode } from "@/lib/persistence/mode"
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { validateProfilePreferences } from "@/lib/profile-preferences";
 import type { ProfilePreferences } from "@/lib/types";
+import { getPublicEnvironment } from "@/lib/env";
+import { localPersistenceAdapter } from "@/lib/persistence/local-adapter";
 
 const PROFILE_KEY = "viajes.profile.preferences.v1";
 const ANONYMOUS_SCOPE_KEY = "viajes.anonymous.scope.v1";
 
 function anonymousScope(): string {
-  let id = localStorage.getItem(ANONYMOUS_SCOPE_KEY) ?? sessionStorage.getItem(ANONYMOUS_SCOPE_KEY);
+  let id = localPersistenceAdapter.getItem(ANONYMOUS_SCOPE_KEY)
+    ?? localPersistenceAdapter.getItem(ANONYMOUS_SCOPE_KEY, "session");
   if (!id) {
     id = crypto.randomUUID();
   }
-  localStorage.setItem(ANONYMOUS_SCOPE_KEY, id);
+  localPersistenceAdapter.setItem(ANONYMOUS_SCOPE_KEY, id);
   return `anonymous:${id}`;
 }
 
 export async function getPlannerDraftScope(): Promise<string> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) {
+  const { supabaseUrl, supabasePublishableKey } = getPublicEnvironment();
+  if (!supabaseUrl || !supabasePublishableKey) {
     setVisitorLocalMode(true);
     return "anonymous";
   }
@@ -58,7 +62,8 @@ export async function getProfilePreferences(): Promise<ProfilePreferences> {
   if (getPersistenceMode() === "supabase" && scope.startsWith("user:")) return requestProfile("GET");
   if (getPersistenceMode() === "supabase") throw new Error("Inicia sesión para consultar las preferencias privadas de tu cuenta.");
   const key = `${PROFILE_KEY}.${encodeURIComponent(scope)}`;
-  const serialized = localStorage.getItem(key) ?? (scope === "anonymous" ? localStorage.getItem(PROFILE_KEY) : null);
+  const serialized = localPersistenceAdapter.getItem(key)
+    ?? (scope === "anonymous" ? localPersistenceAdapter.getItem(PROFILE_KEY) : null);
   if (!serialized) return { ...defaultProfile };
   try {
     const parsed = validateProfilePreferences(JSON.parse(serialized));
@@ -76,6 +81,6 @@ export async function saveProfilePreferences(preferences: ProfilePreferences): P
   const scope = await getPlannerDraftScope();
   if (getPersistenceMode() === "supabase" && scope.startsWith("user:")) return requestProfile("PUT", validated);
   if (getPersistenceMode() === "supabase") throw new Error("Inicia sesión para guardar las preferencias privadas de tu cuenta.");
-  localStorage.setItem(`${PROFILE_KEY}.${encodeURIComponent(scope)}`, JSON.stringify(validated));
+  localPersistenceAdapter.setItem(`${PROFILE_KEY}.${encodeURIComponent(scope)}`, JSON.stringify(validated));
   return validated;
 }

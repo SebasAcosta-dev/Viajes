@@ -2,15 +2,16 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
+import { getPublicEnvironment } from "@/lib/env";
 
-let client: SupabaseClient | undefined;
+let client: SupabaseClient<Database, "public"> | undefined;
 
-export function createSupabaseBrowserClient(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+export function createSupabaseBrowserClient(): SupabaseClient<Database, "public"> {
+  const { supabaseUrl: url, supabasePublishableKey: key } = getPublicEnvironment();
   if (!url || !key) {
     throw new Error("Faltan NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.");
   }
-  client ??= createBrowserClient(url, key);
+  client ??= createBrowserClient<Database, "public">(url, key);
   return client;
 }

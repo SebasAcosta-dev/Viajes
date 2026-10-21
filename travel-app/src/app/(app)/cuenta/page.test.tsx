@@ -68,6 +68,16 @@ describe("autenticación de Cuenta", () => {
     vi.unstubAllEnvs();
   });
 
+  it("abre la sección solicitada por el parámetro tab sin estado duplicado", async () => {
+    window.history.replaceState(null, "", "/cuenta?tab=favorites");
+    render(<AccountPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Destinos favoritos" })).toHaveAttribute("aria-current", "page");
+    });
+    expect(screen.getByRole("region", { name: "Destinos favoritos" })).toBeInTheDocument();
+  });
+
   it("mantiene formularios independientes y no revela el estado de una cuenta ante credenciales inválidas", async () => {
     signInWithPasswordMock.mockResolvedValue({ error: new Error("Invalid login credentials") });
     signUpMock.mockResolvedValue({ error: null, data: { user: { id: "opaque-user" }, session: null } });

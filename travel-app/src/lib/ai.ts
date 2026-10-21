@@ -1,5 +1,9 @@
+import "server-only";
+
 import type { Currency, ItineraryDay, ItineraryItem } from "@/lib/types";
 import { addDailySchedules } from "@/lib/itinerary-schedule";
+import { getPublicEnvironment } from "@/lib/env";
+import { getServerEnvironment } from "@/lib/env.server";
 
 export interface AssistantContext {
   origin?: string;
@@ -680,7 +684,7 @@ async function requestCompletion(
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+        "HTTP-Referer": getPublicEnvironment().siteUrl ?? "http://localhost:3000",
         "X-OpenRouter-Title": "Viajes",
       },
       body: JSON.stringify({
@@ -760,16 +764,17 @@ function makeContinuationMessage(): string {
 }
 
 export async function generateTravelAssistantReply(message: string, context?: AssistantContext): Promise<AssistantReply> {
-  const mode = process.env.NEXT_PUBLIC_APP_MODE ?? "demo";
+  const mode = getPublicEnvironment().appMode;
   if (mode === "demo") return demoReply(message, context);
   if (mode !== "production") throw new AssistantProviderError("NEXT_PUBLIC_APP_MODE debe ser demo o production.", 500);
 
-  const provider = process.env.AI_PROVIDER ?? "openrouter";
+  const serverEnvironment = getServerEnvironment();
+  const provider = serverEnvironment.aiProvider ?? "openrouter";
   if (provider !== "openrouter") throw new AssistantProviderError("AI_PROVIDER debe ser openrouter para esta integración.", 500);
 
-  const apiKey = process.env.AI_API_KEY;
+  const apiKey = serverEnvironment.aiApiKey;
   if (!apiKey) throw new AssistantProviderError("Falta AI_API_KEY para activar OpenRouter en modo production.", 503);
-  const model = process.env.AI_MODEL ?? DEFAULT_MODEL;
+  const model = serverEnvironment.aiModel ?? DEFAULT_MODEL;
   const structuredItineraryRequested = isItineraryRequest(message);
   const requestedDays = requestedDaysFromContext(context) ?? requestedDaysFromMessage(message);
   if (structuredItineraryRequested && requestedDays && requestedDays > MAX_DAYS_PER_COMPLETION) {
