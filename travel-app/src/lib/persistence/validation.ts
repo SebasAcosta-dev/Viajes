@@ -1,5 +1,6 @@
 import type { TripDraft } from "@/lib/persistence/types";
 import type { Currency, ItineraryItem, TripStatus, TravelType } from "@/lib/types";
+import { durationBetween } from "@/lib/itinerary-schedule";
 
 const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
 const travelTypes: TravelType[] = [
@@ -106,11 +107,11 @@ export function validateTripDraft(value: unknown): TripDraft | undefined {
     );
     if (timed.length > 0 && timed.length === day.items.length) {
       const sorted = [...timed].sort((left, right) => String(left.startTime).localeCompare(String(right.startTime)));
-      let previousEnd = 9 * 60;
+      let previousEnd = 0;
       for (const activity of sorted) {
         const start = Number(activity.startTime?.slice(0, 2)) * 60 + Number(activity.startTime?.slice(3, 5));
         const end = Number(activity.endTime?.slice(0, 2)) * 60 + Number(activity.endTime?.slice(3, 5));
-        if (start < 9 * 60 || end > 21 * 60 || start < previousEnd || end - start !== activity.durationMinutes) return false;
+        if (start < previousEnd || end - start !== activity.durationMinutes) return false;
         previousEnd = end;
       }
     }
@@ -206,5 +207,44 @@ export function validateActivityUpdate(value: unknown): Partial<ItineraryItem> |
     ...(typeof location === "string" ? { location } : {}),
     ...(typeof travelMinutes === "number" ? { travelMinutes } : {}),
     ...(reliability === "verified" || reliability === "estimated" || reliability === "unknown" ? { reliability } : {}),
+  };
+}
+
+export function validateActivityCreate(value: unknown): {
+  name: string;
+  description: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  location?: string;
+  blockType: NonNullable<ItineraryItem["blockType"]>;
+} | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const description = value.description;
+  const startTime = value.startTime;
+  const endTime = value.endTime;
+  const durationMinutes = value.durationMinutes;
+  const location = value.location;
+  const blockType = value.blockType;
+  const supportedBlockTypes: NonNullable<ItineraryItem["blockType"]>[] = [
+    "activity", "travel", "breakfast", "lunch", "dinner", "rest", "free_time",
+  ];
+  if (!name || name.length > 200
+    || typeof description !== "string" || description.length > 2000
+    || typeof startTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)
+    || typeof endTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)
+    || durationBetween(startTime, endTime) !== durationMinutes
+    || typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440
+    || (location !== undefined && (typeof location !== "string" || location.length > 160))
+    || (blockType !== undefined && !supportedBlockTypes.includes(blockType as NonNullable<ItineraryItem["blockType"]>))) return undefined;
+  return {
+    name,
+    description,
+    startTime,
+    endTime,
+    durationMinutes,
+    ...(typeof location === "string" && location.trim() ? { location: location.trim() } : {}),
+    blockType: (blockType ?? "activity") as NonNullable<ItineraryItem["blockType"]>,
   };
 }

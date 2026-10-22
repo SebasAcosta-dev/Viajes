@@ -192,6 +192,69 @@ export async function updateActivity(tripId: string, activity: ItineraryItem): P
   localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
 }
 
+export async function createActivity(
+  tripId: string,
+  day: ItineraryDay,
+  activity: Pick<ItineraryItem, "name" | "description" | "startTime" | "endTime" | "durationMinutes" | "location" | "blockType">,
+): Promise<{ orderUpdated: boolean; orderErrorCode?: string }> {
+  if (!activity.startTime || !activity.endTime) throw new Error("Indica las horas de inicio y finalización.");
+  if (shouldUseSupabase()) {
+    const result = await api<{ created?: unknown; orderUpdated?: unknown; orderErrorCode?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/days/${encodeURIComponent(day.id)}/activities`,
+      { method: "POST", body: JSON.stringify({ ...activity, blockType: activity.blockType ?? "activity" }) },
+    );
+    if (result.created !== true || typeof result.orderUpdated !== "boolean") {
+      throw new Error("El servidor no confirmó la creación de la actividad.");
+    }
+    return {
+      orderUpdated: result.orderUpdated,
+      ...(typeof result.orderErrorCode === "string" ? { orderErrorCode: result.orderErrorCode } : {}),
+    };
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  const targetDay = trip?.itinerary.find((entry) => entry.id === day.id);
+  if (!trip || !targetDay) throw new Error("No se encontró la jornada.");
+  const created: ItineraryItem = {
+    ...activity,
+    id: newId(),
+    blockType: activity.blockType ?? "activity",
+    currency: trip.currency,
+    order: targetDay.items.length + 1,
+    notes: "",
+    source: "desconocido",
+    priceStatus: "unknown",
+  };
+  targetDay.items = [...targetDay.items, created].sort((left, right) => (left.startTime ?? "99:99").localeCompare(right.startTime ?? "99:99")
+    || (left.endTime ?? "99:99").localeCompare(right.endTime ?? "99:99"))
+    .map((item, index) => ({ ...item, order: index + 1 }));
+  trip.updatedAt = new Date().toISOString();
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
+  return { orderUpdated: true };
+}
+
+export async function deleteActivity(tripId: string, dayId: string, activityId: string): Promise<void> {
+  if (shouldUseSupabase()) {
+    const result = await api<{ deleted?: unknown }>(
+      `/api/trips/${encodeURIComponent(tripId)}/activities/${encodeURIComponent(activityId)}`,
+      { method: "DELETE" },
+    );
+    if (result.deleted !== true) throw new Error("El servidor no confirmó la eliminación de la actividad.");
+    return;
+  }
+  const trips = demoTrips();
+  const trip = trips.find((entry) => entry.id === tripId);
+  const day = trip?.itinerary.find((entry) => entry.id === dayId);
+  if (!trip || !day) throw new Error("No se encontró la jornada.");
+  if (!day.items.some((item) => item.id === activityId)) throw new Error("No se encontró la actividad.");
+  day.items = day.items.filter((item) => item.id !== activityId).map((item, index) => ({ ...item, order: index + 1 }));
+  trip.expenses = trip.expenses.map((expense) => expense.activityId === activityId
+    ? { ...expense, activityId: undefined }
+    : expense);
+  trip.updatedAt = new Date().toISOString();
+  localPersistenceAdapter.setItem(TRIPS_KEY, JSON.stringify(trips));
+}
+
 export async function reorderActivities(tripId: string, dayId: string, activityIds: string[]): Promise<void> {
   if (shouldUseSupabase()) {
     const result = await api<{ reordered?: unknown }>(

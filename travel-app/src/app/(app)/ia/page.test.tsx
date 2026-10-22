@@ -74,6 +74,6 @@ describe("asistente de viajes", () => {
     });
     expect(await screen.findByText(new RegExp(`${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${startDate}T12:00:00Z`))} – ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${endDate}T12:00:00Z`))}`))).toBeTruthy();
     expect(screen.getByText("10:00–11:00")).toBeTruthy();
-    expect(screen.getAllByText(/09:00–21:00/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Las horas de las actividades son propuestas, no límites/) ).toBeInTheDocument();
   });
 });

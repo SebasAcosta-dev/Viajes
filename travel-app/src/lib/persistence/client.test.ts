@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addExpense,
   createTripGroup,
+  createActivity,
+  deleteActivity,
   deleteExpense,
   deleteTrip,
   listFavorites,
@@ -108,6 +110,28 @@ describe("persistencia en modo demo", () => {
 
     await deleteTrip(trip.id);
     expect((await listTrips()).some((entry) => entry.id === trip.id)).toBe(false);
+  });
+
+  it("crea y elimina una actividad local sin borrar el resto de la jornada", async () => {
+    const trip = await saveTrip({
+      ...draft,
+      itinerary: [{ ...draft.itinerary[0], items: [{ ...draft.itinerary[0].items[0], startTime: "09:00", endTime: "10:00" }] }],
+    });
+    const day = trip.itinerary[0];
+    const created = await createActivity(trip.id, day, {
+      name: "Paseo temprano", description: "", startTime: "06:00", endTime: "06:45", durationMinutes: 45,
+      blockType: "free_time",
+    });
+    expect(created.orderUpdated).toBe(true);
+    const saved = (await listTrips()).find((entry) => entry.id === trip.id);
+    expect(saved?.itinerary[0].items.map((item) => item.name)).toEqual(["Paseo temprano", "Paseo"]);
+    const createdActivity = saved?.itinerary[0].items.find((item) => item.name === "Paseo temprano");
+    expect(createdActivity).toBeDefined();
+    if (!createdActivity) throw new Error("La actividad local creada no se encontró.");
+    await deleteActivity(trip.id, day.id, createdActivity.id);
+    const afterDelete = (await listTrips()).find((entry) => entry.id === trip.id);
+    expect(afterDelete?.itinerary[0].items).toHaveLength(1);
+    expect(afterDelete?.itinerary[0].items[0].name).toBe("Paseo");
   });
 
   it("alterna destinos favoritos y conserva el cambio en el almacenamiento local", async () => {

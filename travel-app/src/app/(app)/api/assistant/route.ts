@@ -22,6 +22,11 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
   if (typeof value !== "object" || Array.isArray(value)) return null;
 
   const input = value as Record<string, unknown>;
+  const rawActivity = input.activity;
+  if (rawActivity !== undefined && (
+    !rawActivity || typeof rawActivity !== "object" || Array.isArray(rawActivity)
+  )) return null;
+  const activity = rawActivity as Record<string, unknown> | undefined;
   if (
     (input.destination !== undefined && (typeof input.destination !== "string" || input.destination.length > 120)) ||
     (input.origin !== undefined && (typeof input.origin !== "string" || input.origin.length > 120)) ||
@@ -33,7 +38,15 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
     (input.notes !== undefined && (typeof input.notes !== "string" || input.notes.length > 1000)) ||
     (input.startDate !== undefined && !isValidIsoDate(input.startDate)) ||
     (input.endDate !== undefined && !isValidIsoDate(input.endDate)) ||
-    (input.currency !== undefined && (typeof input.currency !== "string" || !currencies.includes(input.currency as Currency)))
+    (input.currency !== undefined && (typeof input.currency !== "string" || !currencies.includes(input.currency as Currency))) ||
+    (activity !== undefined && (
+      typeof activity.name !== "string" || !activity.name.trim() || activity.name.length > 160 ||
+      (activity.description !== undefined && (typeof activity.description !== "string" || activity.description.length > 1000)) ||
+      (activity.location !== undefined && (typeof activity.location !== "string" || activity.location.length > 240)) ||
+      (activity.startTime !== undefined && (typeof activity.startTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(activity.startTime))) ||
+      (activity.endTime !== undefined && (typeof activity.endTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(activity.endTime))) ||
+      (activity.durationMinutes !== undefined && (typeof activity.durationMinutes !== "number" || !Number.isInteger(activity.durationMinutes) || activity.durationMinutes < 1 || activity.durationMinutes > 1440))
+    ))
   ) {
     return null;
   }
@@ -59,6 +72,16 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
   if (typeof input.startDate === "string") context.startDate = input.startDate;
   if (typeof input.endDate === "string") context.endDate = input.endDate;
   if (typeof input.currency === "string") context.currency = input.currency as Currency;
+  if (activity) {
+    context.activity = {
+      name: activity.name as string,
+      ...(typeof activity.description === "string" ? { description: activity.description } : {}),
+      ...(typeof activity.location === "string" ? { location: activity.location } : {}),
+      ...(typeof activity.startTime === "string" ? { startTime: activity.startTime } : {}),
+      ...(typeof activity.endTime === "string" ? { endTime: activity.endTime } : {}),
+      ...(typeof activity.durationMinutes === "number" ? { durationMinutes: activity.durationMinutes } : {}),
+    };
+  }
   return context;
 }
 

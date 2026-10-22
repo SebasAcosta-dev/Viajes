@@ -212,7 +212,7 @@ export default function IaPage() {
                       <p className="mt-1 text-sm font-medium text-slate-700">
                         Periodo: {formatTripPeriod(itinerary.startDate ?? tripDetails.startDate, itinerary.endDate ?? tripDetails.endDate)}
                       </p>
-                      <p className="text-xs text-slate-500">Horario general de actividades: 09:00–21:00 · las fechas no indican horas de transporte.</p>
+                      <p className="text-xs text-slate-500">Las horas son propuestas flexibles; las fechas no indican horas de transporte.</p>
                     </div>
                     <div className="rounded-xl bg-emerald-50 px-3 py-2 text-right">
                       <p className="text-xs text-emerald-800">{itinerary.budget.status === "provided" ? "Presupuesto indicado" : "Presupuesto estimado"}</p>
@@ -230,7 +230,7 @@ export default function IaPage() {
                     {(day.date || itinerary.startDate) && (
                       <p className="mt-1 text-xs text-slate-500">
                         {formatIsoDate(day.date ?? (itinerary.startDate ? addIsoDays(itinerary.startDate, day.dayNumber - 1) : undefined))}
-                        · Actividades 09:00–21:00
+                        Las horas de las actividades son propuestas, no límites.
                       </p>
                     )}
                     {day.summary && <p className="mt-2 text-sm text-slate-600">{day.summary}</p>}

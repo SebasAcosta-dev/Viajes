@@ -659,12 +659,68 @@ describe("OpenRouter assistant", () => {
     expect(metadata).not.toContain("Marrakech");
   });
 
+  it("acepta horarios tempranos y nocturnos del mismo día sin aplicar el rango antiguo", async () => {
+    enableOpenRouter();
+    const plan = itinerary();
+    plan.days[0].activities = [
+      Object.assign({ name: "Desayuno", description: "", estimated_duration_minutes: 45, estimated_cost: 0, currency: "EUR" }, { start_time: "07:30", end_time: "08:15" }),
+      Object.assign({ name: "Visita nocturna", description: "", estimated_duration_minutes: 60, estimated_cost: 0, currency: "EUR" }, { start_time: "22:00", end_time: "23:00" }),
+    ];
+    mockOpenRouter(completion(JSON.stringify(plan)));
+
+    const reply = await generateTravelAssistantReply("Organiza un viaje a Marrakech de dos días");
+
+    expect(reply.itinerary?.days[0].items.map((item) => [item.name, item.startTime, item.endTime])).toEqual([
+      ["Desayuno", "07:30", "08:15"],
+      ["Desayuno libre", "09:00", "09:45"],
+      ["Tiempo para almorzar", "13:00", "14:00"],
+      ["Cena libre", "19:00", "20:00"],
+      ["Visita nocturna", "22:00", "23:00"],
+    ]);
+  });
+
   it("mapea errores HTTP del proveedor sin convertirlos en respuestas demo", async () => {
     enableOpenRouter();
     mockOpenRouter({ error: { code: 429, message: "rate limit" } }, 429);
 
     await expect(generateTravelAssistantReply("Organiza un viaje a Marrakech"))
       .rejects.toMatchObject({ status: 429 });
+  });
+
+  it("valida y devuelve alternativas contextuales sin incluir datos ajenos a la actividad", async () => {
+    enableOpenRouter();
+    const fetchMock = mockOpenRouter(completion(JSON.stringify({ alternatives: [
+      { name: "Museo de Arte", description: "Colección de arte moderno.", durationMinutes: 75, location: "Downtown" },
+      { name: "Paseo arquitectónico", description: "Ruta a pie por edificios históricos.", durationMinutes: 45 },
+    ] })));
+
+    const reply = await generateTravelAssistantReply("Dame opciones similares", {
+      destination: "Miami",
+      interests: ["Arquitectura"],
+      notes: "Evitar escaleras",
+      activity: { name: "Freedom Tower", location: "Downtown", startTime: "10:00", endTime: "11:30", durationMinutes: 90 },
+    });
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+
+    expect(reply.activityAlternatives).toEqual([
+      { name: "Museo de Arte", description: "Colección de arte moderno.", durationMinutes: 75, location: "Downtown" },
+      { name: "Paseo arquitectónico", description: "Ruta a pie por edificios históricos.", durationMinutes: 45 },
+    ]);
+    expect(requestBody.messages[1].content).toContain("Freedom Tower");
+    expect(requestBody.messages[1].content).toContain("Evitar escaleras");
+    expect(requestBody.messages[1].content).not.toContain("budget");
+  });
+
+  it("rechaza alternativas del proveedor que no cumplen el contrato", async () => {
+    enableOpenRouter();
+    mockOpenRouter(completion(JSON.stringify({ alternatives: [
+      { name: "Actividad", description: "No válida", durationMinutes: 0 },
+    ] })));
+
+    await expect(generateTravelAssistantReply("Busca otra opción", {
+      destination: "Miami",
+      activity: { name: "Freedom Tower" },
+    })).rejects.toMatchObject({ status: 502 });
   });
 
   it("traduce estados HTTP conocidos", () => {

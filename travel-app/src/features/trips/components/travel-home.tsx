@@ -9,14 +9,14 @@ import { generateItineraryFromTrip } from "@/lib/itinerary";
 import { addDailySchedules } from "@/lib/itinerary-schedule";
 import { validateTripForm } from "@/lib/validators";
 import { getPlannerDraftScope, getProfilePreferences } from "@/lib/persistence/profile-client";
-import { listFavorites, listTripSummaries, persistenceLabel, toggleFavorite as persistFavorite } from "@/lib/persistence/client";
+import { listTripSummaries, persistenceLabel } from "@/lib/persistence/client";
 import { allTravelInterests, resolveTripInterests } from "@/lib/interest-catalog";
-import { loadGeneratedItinerary, loadTripFormDraft, saveGeneratedItinerary, saveTripFormDraft } from "@/lib/generated-itinerary";
+import { loadTripFormDraft, saveGeneratedItinerary, saveTripFormDraft } from "@/lib/generated-itinerary";
 import { formatTripPeriod } from "@/lib/date-format";
 import { localTodayIso, normalizeNewDateRange } from "@/lib/trip-dates";
 import { useLocalToday } from "@/lib/hooks/use-local-today";
-import type { FavoriteDestination, SavedTripSummary } from "@/lib/persistence/types";
-import type { Destination, ProfilePreferences, TripFormValues } from "@/lib/types";
+import type { SavedTripSummary } from "@/lib/persistence/types";
+import type { ProfilePreferences, TripFormValues } from "@/lib/types";
 
 const defaultForm: TripFormValues = {
   origin: "Madrid",
@@ -47,14 +47,12 @@ export function TravelHome() {
   const hasSavedFormRef = useRef(false);
   const [draftScope, setDraftScope] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [selectedDestination, setSelectedDestination] = useState<Destination>(destinations[0]);
-  const [favorites, setFavorites] = useState<FavoriteDestination[]>([]);
+  const selectedDestination = destinations[0];
   const [savedTrips, setSavedTrips] = useState<SavedTripSummary[]>([]);
   const [persistenceError, setPersistenceError] = useState("");
   const [profile, setProfile] = useState<ProfilePreferences>(defaultProfile);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
-  const [hasGeneratedItinerary, setHasGeneratedItinerary] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -62,7 +60,6 @@ export function TravelHome() {
       .then(async (scope) => {
         if (!active) return;
         setDraftScope(scope);
-        setHasGeneratedItinerary(loadGeneratedItinerary(scope) !== null);
         const savedForm = loadTripFormDraft(scope);
         hasSavedFormRef.current = savedForm !== null;
         if (savedForm) {
@@ -78,11 +75,10 @@ export function TravelHome() {
         }
         const [profileResult, tripData] = await Promise.all([
           getProfilePreferences().then((savedProfile) => ({ profile: savedProfile })).catch((error: unknown) => ({ error })),
-          Promise.all([listFavorites(), listTripSummaries()]),
+          listTripSummaries(),
         ]);
         if (!active) return;
-        setFavorites(tripData[0]);
-        setSavedTrips(tripData[1]);
+        setSavedTrips(tripData);
         if ("error" in profileResult) {
           if (profileResult.error instanceof Error && !profileResult.error.message.includes("Inicia sesión")) {
             setPersistenceError(profileResult.error.message);
@@ -118,14 +114,6 @@ export function TravelHome() {
       .catch((error: unknown) => setPersistenceError(error instanceof Error ? error.message : "No se pudo guardar el borrador del formulario."));
   }, [effectiveForm, customInterests, draftScope]);
 
-  const filteredDestinations = useMemo(() => {
-    return destinations.filter((destination) =>
-      destination.name.toLowerCase().includes(form.destination.toLowerCase()) ||
-      destination.country.toLowerCase().includes(form.destination.toLowerCase()) ||
-      destination.categories.some((category) => category.toLowerCase().includes(form.destination.toLowerCase())),
-    );
-  }, [form.destination]);
-
   const itineraryPreview = useMemo(() => {
     const interests = interestSelectionTouched
       ? resolveTripInterests(effectiveForm.interests, [], customInterests)
@@ -137,14 +125,6 @@ export function TravelHome() {
       .filter((trip) => trip.startDate && (!trip.endDate || trip.endDate >= today))
       .sort((left, right) => (left.startDate ?? "").localeCompare(right.startDate ?? ""));
   }, [savedTrips, today]);
-  const upcomingBudgets = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const trip of upcomingTrips) {
-      totals.set(trip.currency, (totals.get(trip.currency) ?? 0) + trip.budget);
-    }
-    return [...totals.entries()];
-  }, [upcomingTrips]);
-
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (isGenerating || !draftScope) return;
@@ -202,7 +182,7 @@ export function TravelHome() {
         const destination = destinations.find((entry) => entry.name.toLocaleLowerCase("es") === requestForm.destination.toLocaleLowerCase("es"));
         if (destination) {
           const scheduledDays = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
-          if (!scheduledDays) throw new Error("Las actividades de demostración no caben en un horario de 09:00 a 21:00.");
+          if (!scheduledDays) throw new Error("Las actividades de demostración no caben dentro del mismo día.");
           itinerary = {
             destination: destination.name,
             durationDays,
@@ -227,21 +207,11 @@ export function TravelHome() {
         ...("model" in data && typeof data.model === "string" ? { model: data.model } : {}),
         generatedAt: new Date().toISOString(),
       }, draftScope);
-      setHasGeneratedItinerary(true);
       router.push("/itinerario");
     } catch (error) {
       setGenerationError(error instanceof Error ? error.message : "No se pudo generar el itinerario. Vuelve a intentarlo.");
     } finally {
       setIsGenerating(false);
-    }
-  };
-
-  const toggleFavorite = async (destination: Destination) => {
-    setPersistenceError("");
-    try {
-      setFavorites(await persistFavorite(destination.slug, destination.name));
-    } catch (error) {
-      setPersistenceError(error instanceof Error ? error.message : "No se pudo guardar el favorito.");
     }
   };
 
@@ -289,7 +259,7 @@ export function TravelHome() {
             )}
           </div>
         </section>
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,0.8fr)]">
+        <section className="min-w-0">
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -299,21 +269,25 @@ export function TravelHome() {
               <Link href="/viajes" className="text-sm font-semibold text-emerald-800 underline underline-offset-4">Ver mis viajes</Link>
             </div>
             {upcomingTrips.length > 0 ? (
-              <ul className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {upcomingTrips.map((trip) => (
-                  <li key={trip.id}>
-                    <Link href={`/viajes#trip-${encodeURIComponent(trip.id)}`} className="block h-full rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-emerald-300 hover:bg-emerald-50">
-                      <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">{formatTripPeriod(trip.startDate, trip.endDate)}</span>
-                      <span className="mt-2 block text-lg font-semibold text-slate-900">{trip.destination}</span>
-                      <span className="mt-1 block truncate text-sm text-slate-600">{trip.name}</span>
-                      <span className="mt-3 block text-sm font-medium text-slate-800">
-                        {new Intl.NumberFormat("es-ES", { style: "currency", currency: trip.currency }).format(trip.budget)}
-                        <span className="ml-1 text-xs font-normal text-slate-500">presupuesto</span>
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="mt-2 divide-y divide-slate-100">
+                  {upcomingTrips.slice(0, 3).map((trip) => (
+                    <li key={trip.id}>
+                      <Link href={`/viajes#trip-${encodeURIComponent(trip.id)}`} className="flex min-w-0 items-center justify-between gap-3 rounded-xl px-2 py-3 transition hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-slate-900">{trip.destination}</span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-600">{trip.name} · {formatTripPeriod(trip.startDate, trip.endDate)}</span>
+                        </span>
+                        <span className="shrink-0 text-right text-sm font-semibold text-slate-800">
+                          {new Intl.NumberFormat("es-ES", { style: "currency", currency: trip.currency }).format(trip.budget)}
+                          <span className="block text-[0.7rem] font-normal text-slate-500">presupuesto</span>
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                {upcomingTrips.length > 3 && <p className="mt-2 px-2 text-xs text-slate-500">Mostrando 3 de {upcomingTrips.length} próximos viajes. Puedes consultar la lista completa en Mis viajes.</p>}
+              </>
             ) : savedTrips.length > 0 ? (
               <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">No hay fechas futuras en el resumen reciente. Consulta todos tus viajes para ver los anteriores.</p>
             ) : persistenceError ? (
@@ -330,38 +304,8 @@ export function TravelHome() {
               </div>
             )}
           </div>
-          <aside className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="font-semibold text-slate-900">Accesos rápidos</h2>
-              <div className="mt-3 grid gap-2 text-sm">
-                <Link href="/calendario" className="rounded-xl bg-slate-50 px-3 py-3 font-medium text-slate-800 hover:bg-emerald-50">Abrir calendario</Link>
-                <Link href="/presupuesto" className="rounded-xl bg-slate-50 px-3 py-3 font-medium text-slate-800 hover:bg-emerald-50">Revisar presupuestos</Link>
-                <Link href="/ia" className="rounded-xl bg-slate-50 px-3 py-3 font-medium text-slate-800 hover:bg-emerald-50">Preguntar al asistente IA</Link>
-              </div>
-            </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="font-semibold text-slate-900">Presupuesto de próximos viajes</h2>
-              {upcomingBudgets.length > 0 ? (
-                <ul className="mt-3 space-y-2 text-sm">
-                  {upcomingBudgets.map(([currency, total]) => (
-                    <li key={currency} className="flex justify-between gap-3">
-                      <span className="text-slate-600">{currency}</span>
-                      <strong>{new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(total)}</strong>
-                    </li>
-                  ))}
-                </ul>
-              ) : <p className="mt-2 text-sm text-slate-600">{persistenceError ? "No se pudieron cargar los presupuestos de viajes." : "No hay presupuestos de próximos viajes en el resumen reciente."}</p>}
-              <p className="mt-3 text-xs text-slate-500">Las monedas se muestran por separado; no se realiza conversión.</p>
-            </div>
-          </aside>
         </section>
-        {hasGeneratedItinerary && (
-          <Link href="/itinerario" className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
-            Abrir el último itinerario generado
-          </Link>
-        )}
-
-        <section className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)] 2xl:gap-8">
+        <section className="min-w-0">
           <form id="create-trip" onSubmit={handleSubmit} className="min-w-0 scroll-mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-xl font-semibold sm:text-2xl">Formulario rápido</h3>
@@ -480,36 +424,6 @@ export function TravelHome() {
             </button>
           </form>
 
-          <aside className="grid min-w-0 content-start gap-5 sm:grid-cols-2 xl:grid-cols-1">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-lg font-semibold">Preferencias del perfil</h3>
-              <div className="mt-4 space-y-3 text-sm text-slate-600">
-                <p><span className="font-medium text-slate-800">Nombre:</span> {profile.name}</p>
-                <p><span className="font-medium text-slate-800">Moneda:</span> {profile.currency}</p>
-                <p><span className="font-medium text-slate-800">Pace:</span> {profile.pace}</p>
-                <p><span className="font-medium text-slate-800">Tipos favoritos:</span> {profile.travelTypes.join(", ")}</p>
-              </div>
-            </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-lg font-semibold">Favoritos</h3>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {favorites.map((favorite) => (
-                  <span key={favorite.id} className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">{favorite.destinationName}</span>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-lg font-semibold">Viajes guardados</h3>
-              <div className="mt-4 space-y-3">
-                {savedTrips.slice(0, 3).map((trip) => (
-                  <div key={trip.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="font-medium text-slate-800">{trip.name}</p>
-                    <p className="text-sm text-slate-500">{trip.destination} · {trip.status}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </aside>
         </section>
         {persistenceError && (
           <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">
@@ -517,42 +431,12 @@ export function TravelHome() {
           </p>
         )}
 
-        <section className="space-y-5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-semibold">Destinos destacados</h3>
-            <Link href="/destinos" className="text-sm font-medium text-emerald-700">Ver catálogo</Link>
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-slate-900">Mapa de actividades guardadas</h2>
+            <p className="mt-0.5 text-sm text-slate-600">Consulta en el mapa las ubicaciones guardadas en tus itinerarios.</p>
           </div>
-          <div className="grid min-w-0 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {filteredDestinations.map((destination) => (
-              <article key={destination.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                <div className="h-44 bg-cover bg-center" style={{ backgroundImage: `url(${destination.image})` }} />
-                <div className="p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <h4 className="text-lg font-semibold">{destination.name}</h4>
-                    <button type="button" onClick={() => void toggleFavorite(destination)} className={`rounded-full px-2 py-1 text-xs font-medium ${favorites.some((favorite) => favorite.destinationSlug === destination.slug) ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-700"}`}>
-                      {favorites.some((favorite) => favorite.destinationSlug === destination.slug) ? "Favorito" : "Guardar"}
-                    </button>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600">{destination.country} · {destination.region}</p>
-                  <p className="mt-2 text-sm text-slate-600">{destination.description}</p>
-                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                    <span>{destination.bestSeason}</span>
-                    <span>{destination.budgetEstimate} €</span>
-                  </div>
-                  <button type="button" onClick={() => setSelectedDestination(destination)} className="mt-4 w-full rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white">Ver destino</button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.12em] text-emerald-700">Explora tus planes</p>
-            <h2 className="mt-1 text-xl font-bold">Mapa de actividades guardadas</h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">El mapa usa solo las coordenadas que existan en los itinerarios guardados; no inventa ubicaciones ni rutas.</p>
-          </div>
-          <Link href="/mapa" className="min-h-11 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white">Abrir mapa interactivo</Link>
+          <Link href="/mapa" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Abrir mapa interactivo</Link>
         </section>
       </main>
     </div>

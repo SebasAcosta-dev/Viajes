@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateActivityUpdate, validateExpense, validateTripDraft } from "@/lib/persistence/validation";
+import { validateActivityCreate, validateActivityUpdate, validateExpense, validateTripDraft } from "@/lib/persistence/validation";
 
 const validDraft = {
   name: "Marrakech",
@@ -25,10 +25,44 @@ const validDraft = {
 };
 
 describe("validación de persistencia", () => {
+  it("acepta actividades nocturnas o de primera hora y comprueba su duración", () => {
+    expect(validateActivityCreate({
+      name: "Paseo temprano", description: "", startTime: "06:00", endTime: "06:45", durationMinutes: 45,
+      blockType: "free_time",
+    })).toMatchObject({ startTime: "06:00", endTime: "06:45", blockType: "free_time" });
+    expect(validateActivityCreate({
+      name: "Paseo nocturno", description: "", startTime: "23:00", endTime: "23:50", durationMinutes: 50,
+    })).toMatchObject({ startTime: "23:00", durationMinutes: 50 });
+    expect(validateActivityCreate({
+      name: "Horario inconsistente", description: "", startTime: "06:00", endTime: "07:00", durationMinutes: 45,
+    })).toBeUndefined();
+  });
+
   it("permite fechas y costes desconocidos sin inventarlos", () => {
     const draft = validateTripDraft(validDraft);
     expect(draft?.startDate).toBeUndefined();
     expect(draft?.itinerary[0].items[0].estimate).toBeUndefined();
+  });
+
+  it("permite guardar actividades fuera del horario recomendado y rechaza cruces de medianoche", () => {
+    const earlyAndLate = {
+      ...validDraft,
+      itinerary: [{
+        ...validDraft.itinerary[0],
+        items: [
+          { ...validDraft.itinerary[0].items[0], startTime: "07:30", endTime: "08:15", durationMinutes: 45, order: 1 },
+          { ...validDraft.itinerary[0].items[0], id: "late", startTime: "22:00", endTime: "23:00", durationMinutes: 60, order: 2 },
+        ],
+      }],
+    };
+    expect(validateTripDraft(earlyAndLate)).toBeDefined();
+    expect(validateTripDraft({
+      ...validDraft,
+      itinerary: [{
+        ...validDraft.itinerary[0],
+        items: [{ ...validDraft.itinerary[0].items[0], startTime: "23:00", endTime: "00:30", durationMinutes: 90 }],
+      }],
+    })).toBeUndefined();
   });
 
   it("rechaza campos numéricos enviados como texto y días no consecutivos", () => {

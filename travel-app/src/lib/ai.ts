@@ -19,6 +19,21 @@ export interface AssistantContext {
   currency?: Currency;
   requestedDurationDays?: number;
   segmentedRequest?: boolean;
+  activity?: {
+    name: string;
+    description?: string;
+    location?: string;
+    startTime?: string;
+    endTime?: string;
+    durationMinutes?: number;
+  };
+}
+
+export interface ActivityAlternative {
+  name: string;
+  description: string;
+  durationMinutes: number;
+  location?: string;
 }
 
 export interface ItineraryPlan {
@@ -41,6 +56,7 @@ export interface AssistantReply {
   model?: string;
   warning?: string;
   itinerary?: ItineraryPlan;
+  activityAlternatives?: ActivityAlternative[];
 }
 
 export class AssistantProviderError extends Error {
@@ -291,10 +307,10 @@ function itineraryPrompt(message: string, context?: AssistantContext): string {
     "Devuelve exclusivamente un objeto JSON válido que cumpla este esquema, sin Markdown ni texto antes/después:",
     JSON.stringify(itinerarySchema),
     "Para cada jornada, activities contiene bloques horarios. Cada bloque admite name, description, type (activity, travel, breakfast, lunch, dinner, rest, free_time), start_time, end_time, estimated_duration_minutes, location, travel_minutes, estimated_cost_per_person, price_status (estimate o unknown), budget_category (activity o gastronomy), interest_tags, currency y reliability (estimated o unknown).",
-    "Organiza una propuesta cronológica orientativa entre 09:00 y 21:00. Incluye desayuno alrededor de 09:00, tiempo para almorzar entre 13:00–14:30 y cena entre 19:00–20:30; puedes adaptar sus nombres/tiempos a costumbres locales solo si hay base fiable. Incluye descansos o tiempo libre cuando sea apropiado, sin llenar huecos artificialmente. No asignes establecimientos concretos sin datos fiables.",
+    "Organiza una propuesta cronológica en las horas que mejor encajen con el destino; los horarios de comidas son sugerencias, no restricciones; puedes adaptar sus nombres/tiempos a costumbres locales solo si hay base fiable. Incluye descansos o tiempo libre cuando sea apropiado, sin llenar huecos artificialmente. No asignes establecimientos concretos sin datos fiables.",
     "No hay acceso garantizado a rutas, tiempos de trayecto, aperturas ni precios en tiempo real. No inventes distancias, coordenadas, horarios de apertura ni fuentes. Solo incluye desplazamientos cuando exista una base explícita y marca su fiabilidad; los horarios propuestos y datos no verificados son estimaciones. Agrupa por proximidad solo cuando existan datos confiables; si no, organiza una secuencia lógica y señala la limitación.",
     "Escribe en español natural, sin mezclar idiomas salvo nombres oficiales propios. Conserva los nombres oficiales de lugares. Propón actividades coherentes con el destino, distintas entre sí y de duración razonable. Prioriza los intereses recibidos; cada actividad turística debe incluir interest_tags con intereses exactos de la lista si se proporcionó. No marques precios como verificados ni gratis verificados.",
-    `El presupuesto indicado es exclusivamente para visitas y actividades turísticas; excluye vuelos, transporte entre ciudades, transporte urbano, alojamiento, compras personales y comidas. Las comidas usan type breakfast/lunch/dinner y budget_category=gastronomy, sin coste de entradas. Desplazamientos usan type=travel y no se suman al presupuesto. Visitas usan type=activity y budget_category=activity. Incluye exactamente ${requestedDays} jornadas, numeradas consecutivamente desde 1, y un máximo estructural de 12 bloques por jornada. Los bloques deben durar entre 1 y 720 minutos, estar dentro de 09:00–21:00 y no solaparse. Devuelve los bloques en orden cronológico. Genera JSON compacto y no añadas claves ajenas al esquema. El precio por persona es opcional: si no puedes estimarlo usa price_status=unknown y omite el coste; si estimas, usa price_status=estimate. No confundas desconocido con gratis. Usa la moneda indicada en contexto o EUR. Si hay fechas, conserva el intervalo y la duración exactos; si no, deduce la duración de la solicitud, y si no puede deducirse usa 1.`,
+    `El presupuesto indicado es exclusivamente para visitas y actividades turísticas; excluye vuelos, transporte entre ciudades, transporte urbano, alojamiento, compras personales y comidas. Las comidas usan type breakfast/lunch/dinner y budget_category=gastronomy, sin coste de entradas. Desplazamientos usan type=travel y no se suman al presupuesto. Visitas usan type=activity y budget_category=activity. Incluye exactamente ${requestedDays} jornadas, numeradas consecutivamente desde 1, y un máximo estructural de 12 bloques por jornada. Los bloques deben durar entre 1 y 720 minutos, usar horarios válidos del mismo día y no cruzar medianoche y no solaparse. Devuelve los bloques en orden cronológico. Genera JSON compacto y no añadas claves ajenas al esquema. El precio por persona es opcional: si no puedes estimarlo usa price_status=unknown y omite el coste; si estimas, usa price_status=estimate. No confundas desconocido con gratis. Usa la moneda indicada en contexto o EUR. Si hay fechas, conserva el intervalo y la duración exactos; si no, deduce la duración de la solicitud, y si no puede deducirse usa 1.`,
     ...(context?.segmentedRequest ? ["Este es un tramo de un viaje más largo: genera exclusivamente las jornadas indicadas por las fechas y la duración de este contexto. No añadas jornadas del resto del viaje."] : []),
   ].join("\n\n");
 }
@@ -465,7 +481,7 @@ function validateAndNormalizeItinerary(
     }
 
     const items: ItineraryItem[] = [];
-    let previousEndMinutes = 9 * 60;
+    let previousEndMinutes = 0;
     for (let activityIndex = 0; activityIndex < activitiesValue.length; activityIndex += 1) {
       const activityValue = activitiesValue[activityIndex];
       if (!isRecord(activityValue)) {
@@ -547,7 +563,6 @@ function validateAndNormalizeItinerary(
       if (typeof startTime === "string" && typeof endTime === "string") {
         const startMinutes = Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5));
         const endMinutes = Number(endTime.slice(0, 2)) * 60 + Number(endTime.slice(3, 5));
-        if (startMinutes < 9 * 60 || endMinutes > 21 * 60) errors.push(`days[${index}].activities[${activityIndex}].time_range`);
         if (endMinutes - startMinutes !== duration) errors.push(`days[${index}].activities[${activityIndex}].time_duration_mismatch`);
         if (previousEndMinutes >= 0 && startMinutes < previousEndMinutes) errors.push(`days[${index}].activities[${activityIndex}].time_overlap_or_order`);
         previousEndMinutes = Math.max(previousEndMinutes, endMinutes);
@@ -775,6 +790,50 @@ export async function generateTravelAssistantReply(message: string, context?: As
   const apiKey = serverEnvironment.aiApiKey;
   if (!apiKey) throw new AssistantProviderError("Falta AI_API_KEY para activar OpenRouter en modo production.", 503);
   const model = serverEnvironment.aiModel ?? DEFAULT_MODEL;
+  if (context?.activity) {
+    const prompt = [
+      "Propón hasta tres alternativas de actividad en JSON válido, sin Markdown, con esta forma: {\"alternatives\":[{\"name\":string,\"description\":string,\"durationMinutes\":integer,\"location\":string opcional}]}.",
+      "No inventes horarios de apertura, disponibilidad ni precios. Responde en español. Usa solo la información contextual necesaria.",
+      `Solicitud: ${message}`,
+      `Contexto: ${JSON.stringify({ destination: context.destination, date: context.startDate, interests: context.interests, restrictions: context.notes, activity: context.activity })}`,
+    ].join("\n");
+    const completion = await requestCompletion([
+      { role: "system", content: "Eres un asistente de viajes. Devuelve únicamente JSON válido con alternativas concisas." },
+      { role: "user", content: prompt },
+    ], apiKey, model);
+    const json = completion.text.match(/\{[\s\S]*\}/)?.[0];
+    let alternatives: ActivityAlternative[] = [];
+    if (json) {
+      try {
+        const parsed: unknown = JSON.parse(json);
+        if (parsed && typeof parsed === "object" && "alternatives" in parsed && Array.isArray(parsed.alternatives)) {
+          alternatives = parsed.alternatives.slice(0, 3).flatMap((entry): ActivityAlternative[] => {
+            if (!entry || typeof entry !== "object") return [];
+            const candidate = entry as Record<string, unknown>;
+            if (typeof candidate.name !== "string" || !candidate.name.trim() || candidate.name.length > 160
+              || typeof candidate.description !== "string" || candidate.description.length > 1000
+              || !Number.isInteger(candidate.durationMinutes) || Number(candidate.durationMinutes) < 1 || Number(candidate.durationMinutes) > 1440
+              || (candidate.location !== undefined && (typeof candidate.location !== "string" || candidate.location.length > 240))) return [];
+            return [{
+              name: candidate.name.trim(),
+              description: candidate.description.trim(),
+              durationMinutes: Number(candidate.durationMinutes),
+              ...(typeof candidate.location === "string" && candidate.location.trim() ? { location: candidate.location.trim() } : {}),
+            }];
+          });
+        }
+      } catch {
+        alternatives = [];
+      }
+    }
+    if (!alternatives.length) throw new AssistantProviderError("El asistente no devolvió alternativas válidas. Vuelve a intentarlo.", 502);
+    return {
+      text: "Estas son las alternativas propuestas. Revisa los detalles antes de sustituir la actividad.",
+      source: "openrouter",
+      model: completion.model ?? model,
+      activityAlternatives: alternatives,
+    };
+  }
   const structuredItineraryRequested = isItineraryRequest(message);
   const requestedDays = requestedDaysFromContext(context) ?? requestedDaysFromMessage(message);
   if (structuredItineraryRequested && requestedDays && requestedDays > MAX_DAYS_PER_COMPLETION) {

@@ -46,7 +46,7 @@ export function FavoriteDestinations() {
       )}
       {favorites.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
-          No hay destinos favoritos guardados. Puedes añadirlos desde Inicio.
+          No hay destinos favoritos guardados. Explora destinos para guardar los que te interesan.
         </p>
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">

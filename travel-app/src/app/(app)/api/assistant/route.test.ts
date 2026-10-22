@@ -46,4 +46,28 @@ describe("validación de fechas del asistente", () => {
     expect(response.status).toBe(200);
     expect(generateTravelAssistantReplyMock).toHaveBeenCalledOnce();
   });
+
+  it("valida y reenvía el contexto mínimo de una actividad al asistente existente", async () => {
+    generateTravelAssistantReplyMock.mockResolvedValue({ source: "openrouter", text: "Alternativas", activityAlternatives: [] });
+    const response = await POST(new Request("http://localhost/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-User-Time-Zone": "UTC" },
+      body: JSON.stringify({
+        message: "Sugiere tres alternativas",
+        context: {
+          destination: "Miami",
+          interests: ["Arquitectura"],
+          activity: { name: "Freedom Tower", location: "Centro", startTime: "10:00", endTime: "11:30", durationMinutes: 90 },
+        },
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(generateTravelAssistantReplyMock).toHaveBeenCalledWith("Sugiere tres alternativas", expect.objectContaining({
+      destination: "Miami",
+      interests: ["Arquitectura"],
+      activity: { name: "Freedom Tower", location: "Centro", startTime: "10:00", endTime: "11:30", durationMinutes: 90 },
+    }));
+    expect(await response.json()).toMatchObject({ activityAlternatives: [] });
+  });
 });

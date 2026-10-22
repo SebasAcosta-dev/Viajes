@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { addExpense, deleteExpense, deleteTrip, listTrips, persistenceLabel, reorderActivities, replaceTripDay, saveTrip, updateActivity, updateExpense, updateTrip } from "@/lib/persistence/client";
-import { calculateScheduledEnd, getBlockTypeLabel } from "@/lib/itinerary-schedule";
+import { addExpense, createActivity, deleteActivity, deleteExpense, deleteTrip, listTrips, persistenceLabel, reorderActivities, updateActivity, updateExpense, updateTrip } from "@/lib/persistence/client";
+import { calculateScheduledEnd, moveItineraryActivity, proposeActivitySchedule } from "@/lib/itinerary-schedule";
 import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { getTripBudgetSummary } from "@/lib/itinerary";
 import { sumAmountsInMinorUnits } from "@/lib/money";
@@ -12,6 +12,12 @@ import type { SavedExpense, SavedTrip } from "@/lib/persistence/types";
 import type { Currency, ItineraryDay, TripStatus } from "@/lib/types";
 import { useLocalToday } from "@/lib/hooks/use-local-today";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
+import { Button } from "@/components/ui";
+import { ActivityEditor, getActivityCategoryClasses } from "@/features/itinerary/components/activity-editor";
+import { ActivityAssistant } from "@/features/itinerary/components/activity-assistant";
+import { ItineraryDayHeader } from "@/features/itinerary/components/itinerary-day-header";
+import { ActivityCreateForm } from "@/features/itinerary/components/activity-create-form";
+import { ActivitySummary } from "@/features/itinerary/components/activity-summary";
 
 type View = "trips" | "budget";
 type TripEditDraft = {
@@ -28,15 +34,16 @@ type TripEditDraft = {
 type TripFilter = "all" | "future" | "active" | "completed" | "drafts";
 type TripSort = "startDate" | "destination" | "status" | "budget";
 
+const tripFilterLabels: Record<TripFilter, string> = {
+  all: "Todos",
+  future: "Futuros",
+  active: "En curso",
+  completed: "Completados",
+  drafts: "Borradores",
+};
+
 function money(amount: number, currency: Currency): string {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(amount);
-}
-
-function priceStatusLabel(status: SavedTrip["itinerary"][number]["items"][number]["priceStatus"]): string {
-  if (status === "verified") return "Precio verificado";
-  if (status === "free_verified") return "Gratuito verificado";
-  if (status === "estimate") return "Estimación";
-  return "Precio no disponible";
 }
 
 function dayDateLabel(day: SavedTrip["itinerary"][number], startDate: string | null): string {
@@ -56,120 +63,6 @@ function tripDateMinimum(
   if (key === "startDate") return today;
   const draftStart = draft?.startDate ?? "";
   return draftStart > today ? draftStart : today;
-}
-
-function ActivityForm({
-  trip,
-  activity,
-  onSaved,
-  onError,
-}: {
-  trip: SavedTrip;
-  activity: SavedTrip["itinerary"][number]["items"][number];
-  onSaved: () => void;
-  onError: (message: string) => void;
-}) {
-  const [name, setName] = useState(activity.name);
-  const [description, setDescription] = useState(activity.description);
-  const [durationMinutes, setDurationMinutes] = useState(activity.durationMinutes);
-  const [startTime, setStartTime] = useState(activity.startTime ?? "");
-  const [latitude, setLatitude] = useState(activity.lat?.toString() ?? "");
-  const [longitude, setLongitude] = useState(activity.lng?.toString() ?? "");
-  const [pricePerPerson, setPricePerPerson] = useState(
-    activity.pricePerPerson?.toString() ??
-    (activity.estimate && trip.travelers ? (activity.estimate / trip.travelers).toFixed(2) : ""),
-  );
-  const [priceStatus, setPriceStatus] = useState<NonNullable<typeof activity.priceStatus>>(activity.priceStatus ?? "unknown");
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      const scheduledStart = startTime || activity.startTime;
-      const endTime = scheduledStart ? calculateScheduledEnd(scheduledStart, durationMinutes) : undefined;
-      if (scheduledStart && !endTime) {
-        throw new Error("La duración no cabe en el horario diario de 09:00 a 21:00.");
-      }
-      if (Boolean(latitude.trim()) !== Boolean(longitude.trim())) {
-        throw new Error("Indica ambas coordenadas para guardar la ubicación.");
-      }
-      const coordinates = latitude.trim() && longitude.trim()
-        ? { lat: Number(latitude), lng: Number(longitude) }
-        : undefined;
-      if (coordinates && (!Number.isFinite(coordinates.lat) || coordinates.lat < -90 || coordinates.lat > 90
-        || !Number.isFinite(coordinates.lng) || coordinates.lng < -180 || coordinates.lng > 180)) {
-        throw new Error("La latitud debe estar entre -90 y 90 y la longitud entre -180 y 180.");
-      }
-      if ((priceStatus === "estimate" || priceStatus === "verified")
-        && (!pricePerPerson.trim() || !Number.isFinite(Number(pricePerPerson)) || Number(pricePerPerson) <= 0)) {
-        throw new Error("Indica un precio positivo por persona o selecciona precio no disponible o gratuito verificado.");
-      }
-      await updateActivity(trip.id, {
-        ...activity,
-        name,
-        description,
-        durationMinutes,
-        ...(startTime ? { startTime, endTime } : {}),
-        ...(coordinates ?? {}),
-        ...(priceStatus === "free_verified"
-          ? { pricePerPerson: undefined, estimate: 0, priceStatus }
-          : priceStatus === "unknown"
-            ? { pricePerPerson: undefined, estimate: undefined, priceStatus }
-            : {
-                pricePerPerson: Number(pricePerPerson),
-                estimate: Number((Number(pricePerPerson) * trip.travelers).toFixed(2)),
-                priceStatus,
-              }),
-      });
-      onSaved();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "No se pudo modificar la actividad.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={(event) => void submit(event)} className="mt-3 grid gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-2">
-      {activity.startTime && activity.endTime && (
-        <p className="text-xs text-slate-600 sm:col-span-2">
-          Horario del bloque: <span className="font-semibold tabular-nums">{activity.startTime}–{activity.endTime}</span>
-        </p>
-      )}
-      <label className="text-xs text-slate-600">Actividad
-        <input value={name} required maxLength={200} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      <label className="text-xs text-slate-600">Duración (minutos)
-        <input type="number" min={1} max={1440} required value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      <label className="text-xs text-slate-600">Hora de inicio
-        <input type="time" min="09:00" max="20:59" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      {startTime && <p className="self-end text-xs text-slate-600">Final estimado: {calculateScheduledEnd(startTime, durationMinutes) ?? "fuera del horario 09:00–21:00"}</p>}
-      <label className="text-xs text-slate-600">Latitud (opcional)
-        <input type="number" min={-90} max={90} step="any" value={latitude} onChange={(event) => setLatitude(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      <label className="text-xs text-slate-600">Longitud (opcional)
-        <input type="number" min={-180} max={180} step="any" value={longitude} onChange={(event) => setLongitude(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      <label className="text-xs text-slate-600 sm:col-span-2">Descripción
-        <input value={description} maxLength={2000} onChange={(event) => setDescription(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-      </label>
-      <label className="text-xs text-slate-600">Estado del precio
-        <select value={priceStatus} onChange={(event) => setPriceStatus(event.target.value as NonNullable<typeof activity.priceStatus>)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-          <option value="verified">Verificado</option><option value="estimate">Estimado</option><option value="unknown">No disponible</option><option value="free_verified">Gratuito verificado</option>
-        </select>
-      </label>
-      <label className="text-xs text-slate-600">Precio por persona ({activity.currency})
-        <input type="number" min={0.01} step="0.01" disabled={priceStatus === "unknown" || priceStatus === "free_verified"} value={pricePerPerson} onChange={(event) => setPricePerPerson(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100" />
-      </label>
-      <p className="self-end text-xs text-slate-500">{priceStatus === "free_verified" ? "Gratuito verificado (0)" : priceStatus === "unknown" ? "Precio no disponible" : pricePerPerson ? `Total para ${trip.travelers}: ${money(Number(pricePerPerson) * trip.travelers, activity.currency)}` : "Indica un precio positivo para este estado."}</p>
-      <button disabled={saving} className="self-end rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
-        {saving ? "Guardando..." : "Guardar actividad"}
-      </button>
-    </form>
-  );
 }
 
 function ExpenseForm({ trip, onSaved, onError }: { trip: SavedTrip; onSaved: () => void; onError: (message: string) => void }) {
@@ -332,131 +225,6 @@ function ExpenseEditor({ trip, expense, onSaved, onError }: {
   );
 }
 
-function RegenerateDayControl({ trip, day, onSaved, onError }: {
-  trip: SavedTrip;
-  day: ItineraryDay;
-  onSaved: (source: "openrouter" | "demo") => void;
-  onError: (message: string) => void;
-}) {
-  const [preview, setPreview] = useState<ItineraryDay | null>(null);
-  const [source, setSource] = useState<"openrouter" | "demo" | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const date = day.date ?? (trip.startDate ? addIsoDays(trip.startDate, day.dayNumber - 1) : undefined);
-
-  const generate = async () => {
-    setLoading(true);
-    onError("");
-    setPreview(null);
-    setSource(null);
-    try {
-      const context = {
-        destination: trip.destination,
-        origin: trip.origin,
-        travelers: trip.travelers,
-        interests: trip.interests,
-        budget: trip.budget,
-        currency: trip.currency,
-        travelType: trip.travelType,
-        ...(date ? { startDate: date, endDate: date } : {}),
-      };
-      const response = await fetch("/api/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: `Reorganiza exclusivamente el día ${day.dayNumber} de ${trip.destination}. Conserva el horario normal de 09:00 a 21:00, los intereses, el presupuesto de actividades y el ritmo equilibrado. No generes ni modifiques otras jornadas. Jornada actual: ${day.theme}.`,
-          context,
-        }),
-      });
-      const result: unknown = await response.json();
-      if (!response.ok || typeof result !== "object" || result === null || !("itinerary" in result)
-        || typeof result.itinerary !== "object" || result.itinerary === null || !("days" in result.itinerary)
-        || !Array.isArray(result.itinerary.days) || result.itinerary.days.length !== 1
-        || !("source" in result) || (result.source !== "openrouter" && result.source !== "demo")) {
-        const message = typeof result === "object" && result !== null && "error" in result && typeof result.error === "string"
-          ? result.error
-          : "El asistente no devolvió exactamente una jornada completa; no se ha cambiado el itinerario.";
-        throw new Error(message);
-      }
-      const candidate = result.itinerary.days[0] as ItineraryDay;
-      const originalByName = new Map(day.items.map((item) => [item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(), item]));
-      const mergedItems = candidate.items.map((item, index) => {
-        const original = originalByName.get(item.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
-        const retainPrice = original && original.currency === item.currency
-          && original.priceStatus !== "unknown"
-          && (item.priceStatus === "unknown" || original.priceStatus === "verified" || original.priceStatus === "free_verified");
-        return {
-          ...item,
-          order: index + 1,
-          ...(original ? {
-            ...(item.lat === undefined && original.lat !== undefined ? { lat: original.lat } : {}),
-            ...(item.lng === undefined && original.lng !== undefined ? { lng: original.lng } : {}),
-          } : {}),
-          ...(retainPrice && original ? {
-            pricePerPerson: original.pricePerPerson,
-            estimate: original.estimate,
-            priceStatus: original.priceStatus,
-            priceSource: original.priceSource,
-            priceCheckedAt: original.priceCheckedAt,
-            budgetCategory: original.budgetCategory,
-          } : {}),
-        };
-      });
-      setPreview({
-        ...candidate,
-        id: day.id,
-        dayNumber: day.dayNumber,
-        ...(date ? { date } : { date: undefined }),
-        items: mergedItems,
-      });
-      setSource(result.source);
-    } catch (generationError) {
-      onError(generationError instanceof Error ? generationError.message : "No se pudo preparar la nueva jornada.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const confirm = async () => {
-    if (!preview) return;
-    setSaving(true);
-    onError("");
-    try {
-      await replaceTripDay(trip.id, day.dayNumber, preview);
-      setPreview(null);
-      if (source) onSaved(source);
-    } catch (saveError) {
-      onError(saveError instanceof Error ? saveError.message : "No se pudo sustituir la jornada.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3">
-      <button type="button" disabled={loading || saving} onClick={() => void generate()} className="min-h-11 rounded-lg bg-violet-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-        {loading ? "Preparando propuesta…" : "Regenerar esta jornada"}
-      </button>
-      {preview && (
-        <div className="mt-3 rounded-lg border border-violet-200 bg-white p-3">
-          <p className="font-semibold">Vista previa · origen: {source === "openrouter" ? "OpenRouter" : "modo demo"}</p>
-          <p className="text-sm text-slate-600">{preview.theme} · {date ? formatIsoDate(date) : "Fecha no disponible"} · horario 09:00–21:00</p>
-          <ol className="mt-2 space-y-1 text-sm">
-            {preview.items.map((item) => <li key={item.id}>{item.startTime && item.endTime ? `${item.startTime}–${item.endTime} · ` : ""}{item.name} · {item.durationMinutes} min</li>)}
-          </ol>
-          <p className="mt-2 text-xs text-amber-800">Solo se reemplazará esta jornada después de confirmar. Los días restantes y los gastos guardados no se sustituyen.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={saving} onClick={() => void confirm()} className="min-h-11 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              {saving ? "Guardando…" : "Confirmar cambio de esta jornada"}
-            </button>
-            <button type="button" disabled={saving} onClick={() => setPreview(null)} className="min-h-11 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold">Descartar</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function TripsManager({ view }: { view: View }) {
   const today = useLocalToday();
   const [trips, setTrips] = useState<SavedTrip[]>([]);
@@ -470,8 +238,13 @@ export function TripsManager({ view }: { view: View }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [tripFilter, setTripFilter] = useState<TripFilter>("all");
   const [tripSort, setTripSort] = useState<TripSort>("startDate");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [budgetTripId, setBudgetTripId] = useState("");
   const [budgetTab, setBudgetTab] = useState<"activities" | "expenses">("activities");
+  const [addingDayId, setAddingDayId] = useState<string | null>(null);
+  const [reorderDrafts, setReorderDrafts] = useState<Record<string, string[]>>({});
+  const [reorderChoice, setReorderChoice] = useState<Record<string, "keep" | "adjust">>({});
+  const [draggedActivityId, setDraggedActivityId] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<boolean> => {
     setError("");
@@ -577,43 +350,53 @@ export function TripsManager({ view }: { view: View }) {
     }));
   };
 
-  const duplicateTrip = async (trip: SavedTrip) => {
-    const createId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const removeActivity = async (trip: SavedTrip, day: ItineraryDay, activityId: string, name: string) => {
+    if (!window.confirm(`¿Eliminar «${name}» de esta jornada? Los gastos asociados se conservarán sin vincular a esta actividad.`)) return;
     try {
-      await saveTrip({
-        name: `${trip.name.slice(0, 151)} (copia)`,
-        origin: trip.origin,
-        destination: trip.destination,
-        startDate: trip.startDate,
-        endDate: trip.endDate,
-        travelers: trip.travelers,
-        budget: trip.budget,
-        currency: trip.currency,
-        interests: trip.interests,
-        travelType: trip.travelType,
-        status: "borrador",
-        itinerary: trip.itinerary.map((day) => ({
-          ...day,
-          id: createId(),
-          items: day.items.map((activity) => ({ ...activity, id: createId() })),
-        })),
-      });
-      await afterSuccess("Copia del viaje");
-    } catch (copyError) {
-      setError(copyError instanceof Error ? copyError.message : "No se pudo duplicar el viaje.");
+      await deleteActivity(trip.id, day.id, activityId);
+      await afterSuccess("Actividad eliminada");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "No se pudo eliminar la actividad.");
     }
   };
 
-  const moveActivity = async (trip: SavedTrip, day: SavedTrip["itinerary"][number], index: number, direction: -1 | 1) => {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= day.items.length) return;
-    const activityIds = day.items.map((activity) => activity.id);
-    [activityIds[index], activityIds[targetIndex]] = [activityIds[targetIndex], activityIds[index]];
+  const saveDayOrder = async (trip: SavedTrip, day: ItineraryDay) => {
+    const byId = new Map(day.items.map((item) => [item.id, item]));
+    const requestedIds = reorderDrafts[day.id];
+    if (!requestedIds) return;
+    const requestedSet = new Set(requestedIds);
+    const ids = [...requestedIds.filter((id) => byId.has(id)), ...day.items.filter((item) => !requestedSet.has(item.id)).map((item) => item.id)];
+    const ordered: ItineraryDay["items"] = [];
+    for (const id of ids) {
+      const item = byId.get(id);
+      if (item) ordered.push(item);
+    }
+    const adjust = reorderChoice[day.id] === "adjust";
+    const proposed = adjust ? proposeActivitySchedule(ordered) : undefined;
+    if (adjust && !proposed) {
+      setError("No se pudieron proponer horarios válidos para el orden elegido. Ajusta las duraciones o conserva los horarios actuales.");
+      return;
+    }
+    let orderWasSaved = false;
     try {
-      await reorderActivities(trip.id, day.id, activityIds);
-      await afterSuccess("Orden de actividades");
+      await reorderActivities(trip.id, day.id, ids);
+      orderWasSaved = true;
+      if (proposed) {
+        for (const updated of proposed) {
+          const original = byId.get(updated.id);
+          if (original && (original.startTime !== updated.startTime || original.endTime !== updated.endTime)) {
+            await updateActivity(trip.id, updated);
+          }
+        }
+      }
+      setReorderDrafts((drafts) => { const next = { ...drafts }; delete next[day.id]; return next; });
+      setReorderChoice((choices) => { const next = { ...choices }; delete next[day.id]; return next; });
+      await afterSuccess(adjust ? "Orden y horarios" : "Orden de actividades");
     } catch (reorderError) {
-      setError(reorderError instanceof Error ? reorderError.message : "No se pudo reordenar la jornada.");
+      await refresh();
+      setError(reorderError instanceof Error
+        ? `${orderWasSaved ? "El orden se guardó, pero no se pudieron aplicar todos los cambios de horario. " : ""}${reorderError.message} Se ha recargado el estado confirmado por el servidor.`
+        : `${orderWasSaved ? "El orden se guardó, pero algunos horarios pueden no haberse actualizado. " : ""}Se ha recargado el estado confirmado por el servidor.`);
     }
   };
 
@@ -636,6 +419,12 @@ export function TripsManager({ view }: { view: View }) {
       return (left.startDate ?? "9999-99-99").localeCompare(right.startDate ?? "9999-99-99");
     });
   }, [budgetTripId, searchQuery, today, tripFilter, tripSort, trips, view]);
+  const activeFilterCount = Number(Boolean(searchQuery.trim())) + Number(tripFilter !== "all");
+
+  const clearTripFilters = () => {
+    setSearchQuery("");
+    setTripFilter("all");
+  };
 
   return (
     <section className={`trip-manager trip-manager--${view} space-y-5`}>
@@ -643,7 +432,7 @@ export function TripsManager({ view }: { view: View }) {
         <p className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Almacenamiento: {persistenceLabel()}</p>
         {view === "trips" && <Link href="/ia" className="rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white">Generar itinerario</Link>}
       </div>
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="grid min-w-0 gap-3">
         {view === "trips" ? (
           <>
             <div className="flex flex-wrap gap-2" role="group" aria-label="Forma de ver los viajes">
@@ -651,22 +440,41 @@ export function TripsManager({ view }: { view: View }) {
               <button type="button" aria-pressed={viewMode === "list"} onClick={() => setViewMode("list")} className={`min-h-11 rounded-xl px-4 text-sm font-semibold ${viewMode === "list" ? "bg-slate-900 text-white" : "border border-slate-300"}`}>Lista</button>
               <button type="button" aria-pressed={viewMode === "calendar"} onClick={() => setViewMode("calendar")} className={`min-h-11 rounded-xl px-4 text-sm font-semibold ${viewMode === "calendar" ? "bg-slate-900 text-white" : "border border-slate-300"}`}>Calendario</button>
             </div>
-            <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-2 xl:grid-cols-3">
-              <label className="text-sm font-medium text-slate-700">Buscar por nombre o destino
+            <div className="grid min-w-0 w-full gap-2 sm:grid-cols-[minmax(12rem,1fr)_minmax(9rem,auto)_auto]">
+              <label className="min-w-0 text-sm font-medium text-slate-700">Buscar viaje
                 <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Ej. Marrakech" className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 px-3" />
+                  placeholder="Nombre o destino" className="mt-1 block min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3" />
               </label>
-              <label className="text-sm font-medium text-slate-700">Filtrar viajes
-                <select value={tripFilter} onChange={(event) => setTripFilter(event.target.value as TripFilter)} className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 px-3">
+              <label className="min-w-0 text-sm font-medium text-slate-700">Estado
+                <select aria-label="Filtrar por estado" value={tripFilter} onChange={(event) => setTripFilter(event.target.value as TripFilter)} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
                   <option value="all">Todos</option><option value="future">Futuros</option><option value="active">En curso</option><option value="completed">Completados</option><option value="drafts">Borradores</option>
                 </select>
               </label>
-              <label className="text-sm font-medium text-slate-700">Ordenar por
-                <select value={tripSort} onChange={(event) => setTripSort(event.target.value as TripSort)} className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 px-3">
-                  <option value="startDate">Fecha de inicio</option><option value="destination">Destino</option><option value="status">Estado</option><option value="budget">Presupuesto</option>
-                </select>
-              </label>
+              <Button type="button" variant="outline" className="mt-auto w-full whitespace-nowrap sm:w-auto" aria-expanded={filtersOpen} aria-controls="trip-more-filters" onClick={() => setFiltersOpen((open) => !open)}>
+                <span className="sm:hidden">Filtros</span><span className="hidden sm:inline">Más filtros</span>
+                {activeFilterCount > 0 && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900" aria-label={`${activeFilterCount} ${activeFilterCount === 1 ? "filtro activo" : "filtros activos"}`}>{activeFilterCount}</span>}
+              </Button>
             </div>
+            {filtersOpen && <div id="trip-more-filters" className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="grid gap-4 sm:grid-cols-2 sm:items-end">
+                <label className="text-sm font-medium text-slate-700">Ordenar resultados
+                  <select value={tripSort} onChange={(event) => setTripSort(event.target.value as TripSort)} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
+                    <option value="startDate">Fecha de inicio</option><option value="destination">Destino</option><option value="status">Estado</option><option value="budget">Presupuesto</option>
+                  </select>
+                </label>
+                <p className="text-sm text-slate-600">Los resultados se actualizan al cambiar una opción.</p>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                <Button type="button" variant="ghost" size="sm" onClick={clearTripFilters} disabled={activeFilterCount === 0}>Limpiar filtros</Button>
+                <Button type="button" size="sm" onClick={() => setFiltersOpen(false)}>Listo</Button>
+              </div>
+            </div>}
+            {activeFilterCount > 0 && <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="Filtros activos">
+              <span className="text-xs font-semibold text-slate-600">Activos:</span>
+              {searchQuery.trim() && <button type="button" onClick={() => setSearchQuery("")} className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-900 hover:bg-emerald-100">Búsqueda: <span className="max-w-40 truncate">{searchQuery.trim()}</span><span aria-hidden="true">×</span><span className="sr-only">Quitar búsqueda</span></button>}
+              {tripFilter !== "all" && <button type="button" onClick={() => setTripFilter("all")} className="inline-flex min-h-8 items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-900 hover:bg-emerald-100">Estado: {tripFilterLabels[tripFilter]}<span aria-hidden="true">×</span><span className="sr-only">Quitar filtro de estado</span></button>}
+              <Button type="button" variant="ghost" size="sm" className="min-h-8 px-2 text-xs" onClick={clearTripFilters}>Limpiar filtros</Button>
+            </div>}
           </>
         ) : (
           <label className="w-full max-w-xl text-sm font-medium text-slate-700">Seleccionar viaje para el presupuesto
@@ -751,12 +559,11 @@ export function TripsManager({ view }: { view: View }) {
               <h2 className="break-words text-xl font-semibold sm:text-2xl">{trip.name}</h2>
               <p className="mt-1 text-sm text-slate-600">{trip.origin ? `${trip.origin} → ` : ""}{trip.destination} · {trip.itinerary.length} días</p>
               <p className="text-xs text-slate-500">Salida: {formatIsoDate(trip.startDate)} · Regreso: {formatIsoDate(trip.endDate)} · {trip.travelers} viajeros</p>
-              <p className="text-xs text-slate-500">Horario general de actividades: 09:00–21:00 · no representa horarios de transporte.</p>
+              <p className="text-xs text-slate-500">Los horarios son flexibles y se ajustan a cada jornada.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs capitalize text-emerald-800">{trip.status}</span>
               {trip.status !== "completado" && <button type="button" onClick={() => void updateTrip(trip.id, { status: "completado" }).then(() => afterSuccess("Viaje marcado como completado")).catch((error: unknown) => setError(error instanceof Error ? error.message : "No se pudo completar el viaje."))} className="min-h-10 rounded-full border border-emerald-200 px-3 py-1 text-sm text-emerald-800">Completar</button>}
-              {view === "trips" && <button type="button" onClick={() => void duplicateTrip(trip)} className="min-h-10 rounded-full border border-slate-300 px-3 py-1 text-sm">Duplicar</button>}
               <button onClick={() => void removeTrip(trip)} className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-700">Eliminar</button>
             </div>
           </div>
@@ -840,61 +647,99 @@ export function TripsManager({ view }: { view: View }) {
 
           {(view === "trips" || (view === "budget" && budgetTab === "activities")) && (
             <div className="mt-5 space-y-4">
-              {trip.itinerary.map((day) => (
-                <section key={day.id} className="rounded-2xl border border-slate-200 p-4">
-                  <h3 className="font-semibold">Día {day.dayNumber}{dayDateLabel(day, trip.startDate)}: {day.theme}</h3>
-                  <p className="text-xs text-slate-500">Horario general de actividades: 09:00–21:00</p>
-                  {view === "trips" && <RegenerateDayControl
-                    trip={trip}
-                    day={day}
-                    onSaved={(source) => void afterSuccess(`Jornada reorganizada (${source === "openrouter" ? "OpenRouter" : "modo demo"})`)}
-                    onError={setError}
-                  />}
-                  {day.items.map((activity, activityIndex) => (
-                    <div id={`activity-${activity.id}`} key={activity.id} className={`mt-3 scroll-mt-6 rounded-xl border p-3 ${
-                      activity.blockType === "travel" ? "border-sky-200 bg-sky-50" :
-                      activity.blockType === "breakfast" || activity.blockType === "lunch" || activity.blockType === "dinner" ? "border-orange-200 bg-orange-50" :
-                      activity.blockType === "rest" || activity.blockType === "free_time" ? "border-violet-200 bg-violet-50" :
-                      "border-slate-200 bg-slate-50"
-                    }`}>
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        {activity.startTime && activity.endTime
-                          ? <span className="font-semibold tabular-nums">{activity.startTime}–{activity.endTime}</span>
-                          : <span className="text-slate-500">Horario no disponible (itinerario anterior)</span>}
-                        <span>{getBlockTypeLabel(activity.blockType)}</span>
-                        <span className="font-medium">{activity.name}</span>
-                        {view === "trips" && <span className="ml-auto inline-flex gap-1">
-                          <button type="button" aria-label={`Mover ${activity.name} arriba`} disabled={activityIndex === 0}
-                            onClick={() => void moveActivity(trip, day, activityIndex, -1)} className="min-h-9 min-w-9 rounded-lg border border-slate-300 disabled:opacity-40">↑</button>
-                          <button type="button" aria-label={`Mover ${activity.name} abajo`} disabled={activityIndex === day.items.length - 1}
-                            onClick={() => void moveActivity(trip, day, activityIndex, 1)} className="min-h-9 min-w-9 rounded-lg border border-slate-300 disabled:opacity-40">↓</button>
-                        </span>}
-                        <span>{activity.durationMinutes} min</span>
-                        {activity.location && <span>{activity.location}</span>}
-                        {activity.blockType === "travel" && activity.travelMinutes !== undefined && <span>{activity.travelMinutes} min de trayecto (estimación)</span>}
-                        {(activity.blockType === undefined || activity.blockType === "activity") && activity.pricePerPerson !== undefined && (
-                          <span>{money(activity.pricePerPerson, activity.currency)} por persona</span>
-                        )}
-                        {(activity.blockType === undefined || activity.blockType === "activity") && activity.priceStatus === "free_verified"
-                          ? <span className="text-emerald-800">{priceStatusLabel(activity.priceStatus)} · 0</span>
-                          : activity.estimate !== undefined && activity.priceStatus !== "unknown"
-                            ? <span>{money(activity.estimate, activity.currency)} total para {trip.travelers} · {priceStatusLabel(activity.priceStatus)}</span>
-                            : (activity.blockType === undefined || activity.blockType === "activity") && <span className="text-amber-800">{priceStatusLabel(activity.priceStatus)}</span>}
-                        {activity.budgetCategory === "gastronomy" && <span className="text-amber-800">Excluido del presupuesto de visitas</span>}
-                        {activity.reliability && <span>Fiabilidad de datos: {activity.reliability}</span>}
+              {trip.itinerary.map((day) => {
+                const draftOrder = reorderDrafts[day.id];
+                const displayedItems = draftOrder
+                  ? (() => {
+                    const ordered = draftOrder.flatMap((id) => day.items.filter((item) => item.id === id));
+                    const known = new Set(ordered.map((item) => item.id));
+                    return [...ordered, ...day.items.filter((item) => !known.has(item.id))];
+                  })()
+                  : day.items;
+                const proposedSchedule = draftOrder
+                  ? proposeActivitySchedule(displayedItems)
+                  : undefined;
+                const conflicts = displayedItems.flatMap((item, index) => displayedItems.slice(index + 1).flatMap((other) => {
+                  if (!item.startTime || !item.endTime || !other.startTime || !other.endTime) return [];
+                  return item.startTime < other.endTime && other.startTime < item.endTime ? [`${item.name} · ${other.name}`] : [];
+                }));
+                return <section key={day.id} className="rounded-2xl border border-slate-200 p-4">
+                  <ItineraryDayHeader dayNumber={day.dayNumber} dateLabel={dayDateLabel(day, trip.startDate).replace(/^ · /, "")} title={day.theme} activityCount={day.items.length} editable={view === "trips"} adding={addingDayId === day.id} reorganizing={Boolean(draftOrder)} onAdd={() => { setAddingDayId(addingDayId === day.id ? null : day.id); setError(""); }} onToggleReorganization={() => {
+                    if (draftOrder) {
+                      setReorderDrafts((drafts) => { const next = { ...drafts }; delete next[day.id]; return next; });
+                      setReorderChoice((choices) => { const next = { ...choices }; delete next[day.id]; return next; });
+                    } else {
+                      setReorderDrafts((drafts) => ({ ...drafts, [day.id]: day.items.map((item) => item.id) }));
+                      setReorderChoice((choices) => ({ ...choices, [day.id]: "keep" }));
+                    }
+                  }} />
+                  {addingDayId === day.id && <ActivityCreateForm currency={trip.currency} existingItems={day.items} confirmOverlaps suggestedStart={day.items.at(-1)?.endTime ? calculateScheduledEnd(day.items.at(-1)!.endTime!, 15) ?? day.items.at(-1)!.endTime! : "09:00"} onCancel={() => setAddingDayId(null)} onSave={async (activity) => {
+                    const result = await createActivity(trip.id, day, activity);
+                    setAddingDayId(null);
+                    void afterSuccess("Actividad").then(() => {
+                      if (!result.orderUpdated) setNotice(`Actividad guardada; el orden no se pudo actualizar (${result.orderErrorCode ?? "c?digo no disponible"}). Reorganiza la jornada para reintentar.`);
+                    });
+                  }} />}
+                  {displayedItems.map((activity, activityIndex) => (
+                    <article id={`activity-${activity.id}`} key={activity.id}
+                      draggable={Boolean(draftOrder)}
+                      onDragStart={(event) => {
+                        const target = event.target;
+                        if (!draftOrder || !(target instanceof HTMLElement) || target.closest("button,input,textarea,select,summary,a")) { event.preventDefault(); return; }
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", activity.id);
+                        setDraggedActivityId(activity.id);
+                      }}
+                      onDragOver={(event) => { if (draftOrder) event.preventDefault(); }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const sourceId = event.dataTransfer.getData("text/plain") || draggedActivityId;
+                        if (!draftOrder || !sourceId || sourceId === activity.id) return;
+                        const next = moveItineraryActivity(displayedItems, sourceId, activity.id).map((item) => item.id);
+                        setReorderDrafts((drafts) => ({ ...drafts, [day.id]: next }));
+                        setDraggedActivityId(null);
+                      }}
+                      onDragEnd={() => setDraggedActivityId(null)}
+                      className={`mt-3 scroll-mt-6 rounded-xl border p-3 ${getActivityCategoryClasses(activity)} ${draggedActivityId === activity.id ? "opacity-50" : ""} ${draftOrder ? "cursor-grab border-dashed active:cursor-grabbing" : ""}`}>
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        {draftOrder && <span aria-hidden="true" className="text-slate-500">⠿</span>}
+                        <ActivitySummary activity={activity} />
+                        {draftOrder && <div className="ml-auto flex gap-1">
+                          <button type="button" aria-label={`Mover ${activity.name} arriba`} disabled={activityIndex === 0} onClick={() => { const ids = moveItineraryActivity(displayedItems, activity.id, displayedItems[activityIndex - 1].id).map((item) => item.id); setReorderDrafts((drafts) => ({ ...drafts, [day.id]: ids })); }} className="min-h-9 min-w-9 rounded-lg border bg-white disabled:opacity-40">↑</button>
+                          <button type="button" aria-label={`Mover ${activity.name} abajo`} disabled={activityIndex === displayedItems.length - 1} onClick={() => { const ids = moveItineraryActivity(displayedItems, activity.id, displayedItems[activityIndex + 1].id).map((item) => item.id); setReorderDrafts((drafts) => ({ ...drafts, [day.id]: ids })); }} className="min-h-9 min-w-9 rounded-lg border bg-white disabled:opacity-40">↓</button>
+                        </div>}
                       </div>
-                      <p className="mt-1 text-sm text-slate-600">{activity.description}</p>
-                      {(activity.blockType === undefined || activity.blockType === "activity") && (
-                        <ActivityForm trip={trip} activity={activity} onSaved={() => void afterSuccess("Actividad")} onError={setError} />
-                      )}
-                    </div>
+                      <details className="mt-2 text-sm"><summary className="w-fit cursor-pointer text-xs font-medium text-emerald-800 underline">Editar y ver detalles</summary>
+                        <div className="mt-2 rounded-lg bg-white p-3">
+                          <p className="mb-2 text-xs text-slate-600">{activity.durationMinutes} min{activity.location ? ` · ${activity.location}` : ""}{activity.description ? ` · ${activity.description}` : ""}</p>
+                          <ActivityEditor key={`${activity.id}-${activity.name}-${activity.startTime}-${activity.durationMinutes}`} initiallyEditing activity={activity} travelers={trip.travelers} onSave={async (updated) => { await updateActivity(trip.id, updated); await afterSuccess("Actividad"); }} />
+                          <ActivityAssistant activity={activity} context={{ destination: trip.destination, origin: trip.origin, interests: trip.interests, travelers: trip.travelers, budget: trip.budget, currency: trip.currency, travelType: trip.travelType }} onApplyAlternative={(alternative) => {
+                            const startTime = activity.startTime;
+                            const endTime = startTime ? calculateScheduledEnd(startTime, alternative.durationMinutes) : undefined;
+                            if (!startTime || !endTime) { setError("Añade una hora de inicio válida antes de sustituir la actividad."); return; }
+                            const replacement = { ...activity, name: alternative.name, description: alternative.description, location: alternative.location, durationMinutes: alternative.durationMinutes, startTime, endTime, pricePerPerson: undefined, estimate: undefined, priceStatus: "unknown" as const };
+                            const overlaps = day.items.some((other) => other.id !== activity.id && other.startTime && other.endTime && startTime < other.endTime && other.startTime < endTime);
+                            if (overlaps) { setError("La alternativa se solapa con otra actividad. Ajusta el horario antes de sustituirla."); return; }
+                            void updateActivity(trip.id, replacement).then(() => afterSuccess("Alternativa de actividad")).catch((saveError: unknown) => setError(saveError instanceof Error ? saveError.message : "No se pudo sustituir la actividad."));
+                          }} />
+                          {view === "trips" && <div className="mt-3 flex justify-end"><button type="button" onClick={() => void removeActivity(trip, day, activity.id, activity.name)} className="min-h-9 rounded-lg border border-red-200 px-3 text-xs font-medium text-red-700">Eliminar actividad</button></div>}
+                        </div>
+                      </details>
+                    </article>
                   ))}
-                </section>
-              ))}
+                  {draftOrder && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <fieldset><legend className="text-sm font-semibold">Cómo tratar los horarios</legend>
+                      <label className="mt-2 flex gap-2 text-sm"><input type="radio" name={`schedule-${day.id}`} checked={reorderChoice[day.id] === "keep"} onChange={() => setReorderChoice((choices) => ({ ...choices, [day.id]: "keep" }))} />Mantener horarios actuales</label>
+                      <label className="mt-2 flex gap-2 text-sm"><input type="radio" name={`schedule-${day.id}`} checked={reorderChoice[day.id] === "adjust"} onChange={() => setReorderChoice((choices) => ({ ...choices, [day.id]: "adjust" }))} />Proponer horarios según el nuevo orden</label>
+                    </fieldset>
+                    {reorderChoice[day.id] === "keep" && conflicts.length > 0 && <p role="alert" className="mt-2 text-sm text-red-800">Los horarios se solapan: {conflicts.join(", ")}. Puedes guardar el orden y corregirlos después.</p>}
+                    {reorderChoice[day.id] === "adjust" && (proposedSchedule ? <ol className="mt-2 space-y-1 text-sm">{proposedSchedule.map((item) => <li key={item.id}><span className="font-semibold tabular-nums">{item.startTime}–{item.endTime}</span> · {item.name}</li>)}</ol> : <p role="alert" className="mt-2 text-sm text-red-800">No hay una propuesta posible dentro del mismo día.</p>)}
+                    <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void saveDayOrder(trip, day)} disabled={reorderChoice[day.id] === "adjust" && !proposedSchedule} className="min-h-10 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-40">Confirmar y guardar orden</button><button type="button" onClick={() => { setReorderDrafts((drafts) => { const next = { ...drafts }; delete next[day.id]; return next; }); setReorderChoice((choices) => { const next = { ...choices }; delete next[day.id]; return next; }); }} className="min-h-10 rounded-lg border bg-white px-3 text-sm">Cancelar</button></div>
+                  </div>}
+                </section>;
+              })}
             </div>
-          )}
-
-          {(view === "trips" || (view === "budget" && budgetTab === "expenses")) && <details open={view === "budget"} className="mt-4 rounded-2xl bg-amber-50 p-4">
+          )}          {(view === "trips" || (view === "budget" && budgetTab === "expenses")) && <details open={view === "budget"} className="mt-4 rounded-2xl bg-amber-50 p-4">
             <summary className="cursor-pointer font-medium text-amber-950">Gastos ({trip.expenses.length})</summary>
             <ul className="mt-3 space-y-2 text-sm">
               {trip.expenses.map((expense) => (
