@@ -77,11 +77,11 @@ export function InterestPicker({
           ))}
         </div>
       )}
-      <div className="max-h-[28rem] space-y-2 overflow-y-auto rounded-2xl border border-slate-200 p-2">
+      <div className="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2">
         {filteredCategories.map((category) => (
-          <details key={category.name} open={Boolean(search) || category.name === "Cultura e historia"} className="rounded-xl bg-slate-50 p-3">
-            <summary className="cursor-pointer font-semibold text-slate-800">{category.name}</summary>
-            <div className="mt-3 flex flex-wrap gap-2">
+          <details key={category.name} open={Boolean(search) || category.name === "Cultura e historia"} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <summary className="cursor-pointer break-words font-semibold text-slate-800">{category.name}</summary>
+            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
               {category.options.map((interest) => {
                 const checked = selected.includes(interest);
                 return (

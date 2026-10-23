@@ -14,8 +14,6 @@ describe("validateTripForm", () => {
       budget: 800,
       currency: "EUR",
       interests: ["Cultura", "Gastronomía"],
-      travelType: "Cultural",
-      pace: "equilibrado",
       notes: "",
     });
 

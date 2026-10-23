@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { addMinorUnits, fromMinorUnits, sumMinorUnitsForCurrency, toMinorUnits } from "@/lib/money";
+import { addMinorUnits, formatMoney, fromMinorUnits, sumMinorUnitsForCurrency, toMinorUnits } from "@/lib/money";
 
 describe("importe monetario en unidades menores", () => {
-  it.each(["EUR", "USD", "GBP", "MAD"] as const)("convierte %s sin perder centavos", (currency) => {
+  it.each(["EUR", "COP", "USD", "GBP", "CHF", "MXN", "ARS", "PEN", "BRL", "CAD", "AUD"] as const)("convierte %s sin perder centavos", (currency) => {
     expect(toMinorUnits(12.34, currency)).toBe(1234);
     expect(fromMinorUnits(1234, currency)).toBe(12.34);
+  });
+
+  it.each(["JPY", "CLP"] as const)("usa unidades enteras para %s", (currency) => {
+    expect(toMinorUnits(1234, currency)).toBe(1234);
+    expect(toMinorUnits(1234.5, currency)).toBe(1235);
+    expect(fromMinorUnits(1234, currency)).toBe(1234);
   });
 
   it("redondea como numeric(12,2), incluidos los empates positivos", () => {
@@ -25,5 +31,10 @@ describe("importe monetario en unidades menores", () => {
     ];
     expect(sumMinorUnitsForCurrency(expenses, "EUR")).toBe(1801);
     expect(addMinorUnits(toMinorUnits(12.34, "EUR"), toMinorUnits(5.67, "EUR"))).toBe(1801);
+  });
+
+  it("formatea COP con sus dos decimales ISO y JPY sin decimales", () => {
+    expect(formatMoney(12345.5, "COP")).toContain("12.345,50");
+    expect(formatMoney(1234, "JPY")).not.toMatch(/[,\.]\d{2}/);
   });
 });

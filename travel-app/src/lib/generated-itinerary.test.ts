@@ -24,6 +24,15 @@ describe("borradores del planificador", () => {
     expect(loadTripFormDraft()).toEqual(form);
   });
 
+  it("recupera borradores sin tipo de viaje ni ritmo y aplica valores compatibles", () => {
+    const formWithoutOptionalFields = { ...form };
+    delete formWithoutOptionalFields.travelType;
+    delete formWithoutOptionalFields.pace;
+    localStorage.setItem("viajes.trip-form-draft.v1.anonymous", JSON.stringify(formWithoutOptionalFields));
+
+    expect(loadTripFormDraft()).toMatchObject({ travelType: "Combinado", pace: "equilibrado" });
+  });
+
   it("conserva el itinerario generado para la página de resultados", () => {
     const draft = {
       form,

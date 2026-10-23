@@ -6,7 +6,7 @@ import {
   validateItinerary,
 } from "@/lib/ai";
 
-const MODEL = "minimax/minimax-m3.1-flash:free";
+const MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const SECRET_TEST_KEY = "test-key-not-for-network";
 
 function enableOpenRouter() {
@@ -107,6 +107,7 @@ describe("OpenRouter assistant", () => {
 
   it("envía la solicitud al endpoint y modelo configurados y devuelve texto", async () => {
     enableOpenRouter();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const fetchMock = mockOpenRouter(completion("Ruta sugerida.", "stop"));
 
     const reply = await generateTravelAssistantReply("Dame ideas para viajar");
@@ -117,11 +118,104 @@ describe("OpenRouter assistant", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(request.headers).get("Authorization")).toBe(`Bearer ${SECRET_TEST_KEY}`);
-    expect(JSON.parse(String(request.body))).toMatchObject({
+    const payload = JSON.parse(String(request.body));
+    expect(payload).toMatchObject({
       model: MODEL,
-      max_tokens: 8192,
+      max_completion_tokens: 8192,
       reasoning: { effort: "low", exclude: true },
     });
+    expect(payload).not.toHaveProperty("response_format");
+    expect(JSON.stringify(info.mock.calls)).toContain(MODEL);
+    expect(JSON.stringify(info.mock.calls)).not.toContain(SECRET_TEST_KEY);
+  });
+
+  it("usa Nemotron gratuito como valor predeterminado sin AI_MODEL", async () => {
+    enableOpenRouter();
+    vi.stubEnv("AI_MODEL", "");
+    const fetchMock = mockOpenRouter(completion("Respuesta disponible.", "stop"));
+
+    await generateTravelAssistantReply("Dame ideas para viajar");
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.model).toBe("nvidia/nemotron-3-ultra-550b-a55b:free");
+  });
+
+  it("distingue un cuerpo HTTP 200 que no es JSON y no registra su contenido", async () => {
+    enableOpenRouter();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("private upstream body", {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    })));
+
+    await expect(generateTravelAssistantReply("Dame ideas para viajar"))
+      .rejects.toMatchObject({ status: 502 });
+
+    const log = JSON.stringify(warning.mock.calls);
+    expect(log).toContain("provider_response_parse");
+    expect(log).toContain("invalid_json");
+    expect(log).toContain("text/plain");
+    expect(log).not.toContain("private upstream body");
+  });
+
+  it("no rechaza bloques sin interés si la etiqueta solo aplica a actividades turísticas", () => {
+    const plan = itinerary({
+      days: itinerary().days.map((day) => ({
+        ...day,
+        activities: [
+            {
+              name: "Desayuno libre",
+              type: "breakfast",
+              start_time: "09:00",
+              end_time: "09:45",
+              estimated_duration_minutes: 45,
+              currency: "EUR",
+              interest_tags: [],
+            },
+            {
+              ...day.activities[0],
+              name: `Visita ${day.day}`,
+              type: "activity",
+              start_time: "10:00",
+              end_time: "11:30",
+              estimated_duration_minutes: 90,
+              interest_tags: ["Fútbol"],
+            },
+            {
+              name: "Tiempo para almorzar",
+              type: "lunch",
+              start_time: "13:00",
+              end_time: "14:00",
+              estimated_duration_minutes: 60,
+              currency: "EUR",
+            },
+            {
+              name: "Cena libre",
+              type: "dinner",
+              start_time: "19:00",
+              end_time: "20:00",
+              estimated_duration_minutes: 60,
+              currency: "EUR",
+            },
+        ],
+      })),
+    });
+    const valid = validateItinerary(plan, { interests: ["Fútbol"], travelers: 2 });
+
+    expect(valid).toBeDefined();
+      expect(valid?.days[0].items.find((item) => item.blockType === "breakfast")?.interestTags).toEqual([]);
+      expect(valid?.days[0].items.find((item) => item.blockType === "activity")?.interestTags).toEqual(["Fútbol"]);
+  });
+
+  it("acepta interest_tags vacío cuando no se proporcionaron intereses", () => {
+    const plan = itinerary({
+      days: itinerary().days.map((day) => ({
+        ...day,
+        activities: [{ ...day.activities[0], interest_tags: [] }],
+      })),
+    });
+
+    expect(validateItinerary(plan)).toBeDefined();
   });
 
   it("admite una respuesta JSON completa", async () => {
@@ -165,7 +259,7 @@ describe("OpenRouter assistant", () => {
     const firstPrompt = JSON.parse(String(fetchMock.mock.calls[0][1].body)).messages[1].content as string;
     const secondPrompt = JSON.parse(String(fetchMock.mock.calls[1][1].body)).messages[1].content as string;
     expect(firstPrompt).toContain('"duration_days":4');
-    expect(firstPrompt).toContain('"day":4');
+    expect(firstPrompt).toContain("exactamente 4 días");
     expect(secondPrompt).toContain('"duration_days":2');
     expect(secondPrompt).toContain("2026-04-16");
   });
@@ -317,16 +411,32 @@ describe("OpenRouter assistant", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("pide español natural, actividades diferenciadas y agrupación geográfica prudente", async () => {
+  it("mantiene el contrato esencial en un prompt compacto y sin repetir ejemplos por día", async () => {
     enableOpenRouter();
-    const fetchMock = mockOpenRouter(completion(JSON.stringify(itinerary())));
-    await generateTravelAssistantReply("Organiza un viaje de dos días");
+    const fourDayPlan = itineraryForDays(4);
+    const fetchMock = mockOpenRouter(completion(JSON.stringify({
+      ...fourDayPlan,
+      days: fourDayPlan.days.map((day) => ({
+        ...day,
+        activities: day.activities.map((activity) => ({ ...activity, interest_tags: ["Arquitectura"] })),
+      })),
+    })));
+    await generateTravelAssistantReply("Organiza un viaje de cuatro días", {
+      origin: "Bogotá", destination: "Marrakech", startDate: "2026-10-24", endDate: "2026-10-27",
+      budget: 700, currency: "COP", interests: ["Arquitectura", "Museos"], notes: "Ritmo relajado",
+    });
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     const prompt = body.messages[1].content as string;
 
-    expect(prompt).toContain("español natural");
-    expect(prompt).toContain("distintas entre sí");
-    expect(prompt).toContain("solo cuando existan datos confiables");
+    expect(prompt).toContain("exactamente 4 días");
+    expect(prompt).toContain("Bogotá");
+    expect(prompt).toContain("COP");
+    expect(prompt).toContain("No conviertas importes a otra moneda");
+    expect(prompt).toContain("interest_tags");
+    expect(prompt).toContain("omite estimated_cost y estimated_cost_per_person");
+    expect(prompt).toContain("No incluyas travel_minutes");
+    expect(prompt).toContain("4 a 7 bloques breves");
+    expect(prompt.length).toBeLessThan(5000);
   });
 
   it("exige etiquetas de interés válidas y calcula el coste total desde el precio por persona", () => {
@@ -471,6 +581,14 @@ describe("OpenRouter assistant", () => {
   it("valida presupuesto, moneda, fecha, orden y duración de actividades", () => {
     expect(validateItinerary(itinerary({ budget: { total: -1, currency: "EUR" } }))).toBeUndefined();
     expect(validateItinerary(itinerary({ budget: { total: 100, currency: "XYZ" } }))).toBeUndefined();
+    const copPlan = itinerary({
+      budget: { total: 125000, currency: "COP", status: "provided" },
+      days: itinerary().days.map((day) => ({
+        ...day,
+        activities: day.activities.map((activity) => ({ ...activity, currency: "COP" })),
+      })),
+    });
+    expect(validateItinerary(copPlan)?.budget).toMatchObject({ total: 125000, currency: "COP" });
     expect(validateItinerary(itinerary({
       days: [
         { day: 1, title: "Día", date: "2026-02-30", activities: itinerary().days[0].activities },
@@ -587,7 +705,7 @@ describe("OpenRouter assistant", () => {
     const repairRequest = JSON.parse(String(fetchMock.mock.calls[2][1].body));
 
     expect(reply.itinerary?.durationDays).toBe(2);
-    expect(firstRequest.messages[1].content).toContain("máximo estructural de 12 bloques por jornada");
+    expect(firstRequest.messages[1].content).toContain("4 a 7 bloques breves");
     expect(continuationRequest.messages.some((entry: { content: string }) => entry.content.includes(truncatedMarker))).toBe(true);
     expect(repairRequest.messages.some((entry: { content: string }) => entry.content.includes(truncatedMarker))).toBe(false);
     expect(repairRequest.messages.at(-1).content).toContain("Errores de validación");
@@ -654,7 +772,7 @@ describe("OpenRouter assistant", () => {
 
     expect(reply.itinerary).toBeUndefined();
     expect(reply.warning).toContain("respuesta quedó incompleta");
-    expect(fetchMock).toHaveBeenCalledTimes(1 + 2);
+    expect(fetchMock).toHaveBeenCalledTimes(1 + 1);
     expect(metadata).toContain("json.truncated");
     expect(metadata).not.toContain("Marrakech");
   });
@@ -681,10 +799,36 @@ describe("OpenRouter assistant", () => {
 
   it("mapea errores HTTP del proveedor sin convertirlos en respuestas demo", async () => {
     enableOpenRouter();
-    mockOpenRouter({ error: { code: 429, message: "rate limit" } }, 429);
+    const fetchMock = mockOpenRouter({ error: { code: 429, message: "rate limit" } }, 429);
 
     await expect(generateTravelAssistantReply("Organiza un viaje a Marrakech"))
       .rejects.toMatchObject({ status: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reintenta una sola respuesta temporal y correlaciona la generación sin registrar el prompt", async () => {
+    enableOpenRouter();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("", {
+        status: 503,
+        headers: { "Retry-After": "0" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(completion(JSON.stringify(itineraryForDays(2)))), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const reply = await generateTravelAssistantReply("Organiza un viaje privado", undefined, { requestId: "trace-test-1" });
+    const logs = JSON.stringify([...warning.mock.calls, ...info.mock.calls]);
+
+    expect(reply.itinerary).toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(logs).toContain("trace-test-1");
+    expect(logs).not.toContain("Organiza un viaje privado");
+    expect(logs).not.toContain(SECRET_TEST_KEY);
   });
 
   it("valida y devuelve alternativas contextuales sin incluir datos ajenos a la actividad", async () => {

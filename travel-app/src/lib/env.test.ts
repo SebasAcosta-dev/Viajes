@@ -19,8 +19,15 @@ describe("validación del entorno", () => {
   });
 
   it("valida las variables de IA por separado en el esquema exclusivamente servidor", () => {
-    expect(parseServerEnvironment({})).toEqual({ aiApiKey: undefined, aiProvider: undefined, aiModel: undefined });
+    expect(parseServerEnvironment({})).toEqual({
+      aiApiKey: undefined,
+      aiProvider: undefined,
+      aiModel: undefined,
+      geoapifyApiKey: undefined,
+    });
     expect(parseServerEnvironment({ AI_API_KEY: "server-test-key" }).aiApiKey).toBe("server-test-key");
+    expect(parseServerEnvironment({ GEOAPIFY_API_KEY: "geoapify-server-test-key" }).geoapifyApiKey)
+      .toBe("geoapify-server-test-key");
     expect(() => parseServerEnvironment({ AI_API_KEY: "" })).not.toThrow();
   });
 });

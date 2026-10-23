@@ -31,6 +31,7 @@ const preferences: ProfilePreferences = {
 
 afterEach(() => {
   localStorage.clear();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   pushMock.mockReset();
   getProfilePreferencesMock.mockReset();
@@ -42,10 +43,12 @@ describe("planificación manual", () => {
     getProfilePreferencesMock.mockResolvedValue(preferences);
     getPlannerDraftScopeMock.mockResolvedValue("anonymous");
     render(<ManualTripPlanner />);
+    expect(screen.queryByLabelText("Tipo de viaje")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ritmo")).not.toBeInTheDocument();
 
     const startDate = addIsoDays(localTodayIso(), 2) ?? localTodayIso();
     const endDate = addIsoDays(startDate, 2) ?? startDate;
-    fireEvent.change(screen.getByRole("textbox", { name: "Origen" }), { target: { value: "Madrid" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Origen" }), { target: { value: "Madrid" } });
     const departure = screen.getByLabelText("Fecha de salida") as HTMLInputElement;
     const returnDate = screen.getByLabelText("Fecha de regreso") as HTMLInputElement;
     expect(departure.min).toBe(localTodayIso());

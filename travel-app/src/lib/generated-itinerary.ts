@@ -62,10 +62,14 @@ export function loadTripFormDraft(scope = "anonymous"): TripFormValues | null {
       typeof form.origin !== "string" || typeof form.destination !== "string" ||
       typeof form.startDate !== "string" || typeof form.endDate !== "string" ||
       typeof form.travelers !== "number" || typeof form.budget !== "number" ||
-      !Array.isArray(form.interests) || typeof form.travelType !== "string" ||
-      typeof form.pace !== "string" || typeof form.notes !== "string"
+      !Array.isArray(form.interests) || (form.travelType !== undefined && typeof form.travelType !== "string") ||
+      (form.pace !== undefined && typeof form.pace !== "string") || typeof form.notes !== "string"
     ) return null;
-    return form as TripFormValues;
+    return {
+      ...form,
+      travelType: typeof form.travelType === "string" ? form.travelType as NonNullable<TripFormValues["travelType"]> : "Combinado",
+      pace: typeof form.pace === "string" ? form.pace : "equilibrado",
+    } as TripFormValues;
   } catch {
     throw new Error("El formulario guardado está dañado y no se ha sobrescrito.");
   }

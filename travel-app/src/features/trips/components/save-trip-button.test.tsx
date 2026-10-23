@@ -49,10 +49,12 @@ describe("guardar un viaje", () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "supabase");
     getPlannerDraftScopeMock.mockResolvedValue("user:account-1");
     saveTripMock.mockResolvedValue({ id: "remote-1" });
-    render(<SaveTripButton draft={draft} />);
+    render(<SaveTripButton draft={draft} generationRequestId="generation-trace-1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar viaje" }));
-    await waitFor(() => expect(saveTripMock).toHaveBeenCalledWith(draft));
+    await waitFor(() => expect(saveTripMock).toHaveBeenCalledWith(draft, {
+      generationRequestId: "generation-trace-1",
+    }));
     expect(screen.getByRole("status")).toHaveTextContent("Supabase");
     expect(saveTripToDeviceMock).not.toHaveBeenCalled();
   });

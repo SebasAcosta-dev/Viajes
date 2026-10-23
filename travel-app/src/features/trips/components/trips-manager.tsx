@@ -6,7 +6,7 @@ import { addExpense, createActivity, deleteActivity, deleteExpense, deleteTrip, 
 import { calculateScheduledEnd, moveItineraryActivity, proposeActivitySchedule } from "@/lib/itinerary-schedule";
 import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { getTripBudgetSummary } from "@/lib/itinerary";
-import { sumAmountsInMinorUnits } from "@/lib/money";
+import { formatMoney, sumAmountsInMinorUnits } from "@/lib/money";
 import { TripCalendar } from "@/features/calendar/components/trip-calendar";
 import type { SavedExpense, SavedTrip } from "@/lib/persistence/types";
 import type { Currency, ItineraryDay, TripStatus } from "@/lib/types";
@@ -18,6 +18,7 @@ import { ActivityAssistant } from "@/features/itinerary/components/activity-assi
 import { ItineraryDayHeader } from "@/features/itinerary/components/itinerary-day-header";
 import { ActivityCreateForm } from "@/features/itinerary/components/activity-create-form";
 import { ActivitySummary } from "@/features/itinerary/components/activity-summary";
+import { CURRENCY_OPTIONS, currencyFractionDigits } from "@/lib/currency-catalog";
 
 type View = "trips" | "budget";
 type TripEditDraft = {
@@ -43,7 +44,7 @@ const tripFilterLabels: Record<TripFilter, string> = {
 };
 
 function money(amount: number, currency: Currency): string {
-  return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(amount);
+  return formatMoney(amount, currency);
 }
 
 function dayDateLabel(day: SavedTrip["itinerary"][number], startDate: string | null): string {
@@ -106,11 +107,11 @@ function ExpenseForm({ trip, onSaved, onError }: { trip: SavedTrip; onSaved: () 
         <input value={description} maxLength={240} required onChange={(event) => setDescription(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
       </label>
       <label className="text-xs text-slate-600">Importe
-        <input type="number" min={0} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        <input type="number" min={0} step={10 ** -currencyFractionDigits(currency)} required value={amount} onChange={(event) => setAmount(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
       </label>
       <label className="text-xs text-slate-600">Moneda
         <select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-          {(["EUR", "USD", "GBP", "MAD"] as const).map((option) => <option key={option}>{option}</option>)}
+          {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
         </select>
       </label>
       <label className="text-xs text-slate-600">Fecha
@@ -197,11 +198,11 @@ function ExpenseEditor({ trip, expense, onSaved, onError }: {
             </select>
           </label>
           <label className="text-xs text-slate-600">Importe
-            <input type="number" min={0} step="0.01" value={amount} required onChange={(event) => setAmount(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border px-3 text-sm" />
+            <input type="number" min={0} step={10 ** -currencyFractionDigits(currency)} value={amount} required onChange={(event) => setAmount(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border px-3 text-sm" />
           </label>
           <label className="text-xs text-slate-600">Moneda
             <select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} className="mt-1 min-h-11 w-full rounded-lg border px-3 text-sm">
-              {(["EUR", "USD", "GBP", "MAD"] as const).map((option) => <option key={option}>{option}</option>)}
+              {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
             </select>
           </label>
           <label className="text-xs text-slate-600">Fecha
@@ -534,7 +535,7 @@ export function TripsManager({ view }: { view: View }) {
       {!loading && view === "trips" && viewMode === "list" && <p className="text-xs text-slate-500">El listado está preparado para desplazamiento horizontal dentro de la tabla en pantallas pequeñas.</p>}
       {!loading && view === "budget" && filteredTrips.length > 1 && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => {
+          {CURRENCY_OPTIONS.map(({ code: currency }) => {
             const currencyTrips = filteredTrips.filter((trip) => trip.currency === currency);
             if (!currencyTrips.length) return null;
             const summaries = currencyTrips.map(getTripBudgetSummary);
@@ -596,7 +597,7 @@ export function TripsManager({ view }: { view: View }) {
               ))}
               <label className="text-sm font-medium text-slate-700">Moneda
                 <select value={tripDrafts[trip.id]?.currency ?? trip.currency} onChange={(event) => setTripDrafts({ ...tripDrafts, [trip.id]: { ...tripDrafts[trip.id], currency: event.target.value as Currency } })} className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3">
-                  {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => <option key={currency}>{currency}</option>)}
+                  {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
                 </select>
               </label>
               <label className="text-sm font-medium text-slate-700">Estado
@@ -610,11 +611,11 @@ export function TripsManager({ view }: { view: View }) {
           </details>}
           <form onSubmit={(event) => void saveBudget(event, trip)} className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl bg-slate-50 p-3">
             <label className="text-xs text-slate-600">Presupuesto
-              <input type="number" min={0} step="0.01" required value={budgetDrafts[trip.id] ?? ""} onChange={(event) => setBudgetDrafts({ ...budgetDrafts, [trip.id]: event.target.value })} className="mt-1 block w-36 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <input type="number" min={0} step={10 ** -currencyFractionDigits(currencyDrafts[trip.id] ?? trip.currency)} required value={budgetDrafts[trip.id] ?? ""} onChange={(event) => setBudgetDrafts({ ...budgetDrafts, [trip.id]: event.target.value })} className="mt-1 block w-36 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
             </label>
             <label className="text-xs text-slate-600">Moneda
               <select value={currencyDrafts[trip.id] ?? trip.currency} onChange={(event) => setCurrencyDrafts({ ...currencyDrafts, [trip.id]: event.target.value as Currency })} className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-                {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => <option key={currency}>{currency}</option>)}
+                {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
               </select>
             </label>
             <button className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white">Guardar presupuesto</button>

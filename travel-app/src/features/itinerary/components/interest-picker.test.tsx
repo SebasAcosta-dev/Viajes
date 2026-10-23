@@ -22,6 +22,80 @@ describe("InterestPicker", () => {
     expect(onSelectedChange).toHaveBeenCalledWith(["Fútbol"]);
   });
 
+  it("presenta las categorías en una columna móvil y dos columnas desde escritorio", () => {
+    const { container } = render(
+      <InterestPicker
+        selected={[]}
+        customInterests={[]}
+        onSelectedChange={vi.fn()}
+        onCustomInterestsChange={vi.fn()}
+      />,
+    );
+
+    const categoryGrid = container.querySelector(".grid.grid-cols-1");
+    expect(categoryGrid).toHaveClass("md:grid-cols-2");
+    expect(categoryGrid).not.toHaveClass("max-h-[28rem]", "overflow-y-auto");
+    expect(container.querySelectorAll("details").length).toBeGreaterThan(1);
+  });
+
+  it("retira los intereses antiguos del catálogo pero permite añadirlos como personalizados", () => {
+    const onCustomInterestsChange = vi.fn();
+    const { rerender } = render(
+      <InterestPicker
+        selected={[]}
+        customInterests={[]}
+        onSelectedChange={vi.fn()}
+        onCustomInterestsChange={onCustomInterestsChange}
+      />,
+    );
+
+    expect(screen.queryByText("Gastronomía")).not.toBeInTheDocument();
+    expect(screen.queryByText("Transporte histórico")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Gastronomía local" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Tranvías históricos" })).not.toBeInTheDocument();
+
+    const input = screen.getByPlaceholderText("Escribe un interés personalizado");
+    fireEvent.change(input, { target: { value: "Gastronomía local" } });
+    fireEvent.click(screen.getByRole("button", { name: "Añadir" }));
+    expect(onCustomInterestsChange).toHaveBeenLastCalledWith(["Gastronomía local"]);
+    rerender(
+      <InterestPicker
+        selected={[]}
+        customInterests={["Gastronomía local"]}
+        onSelectedChange={vi.fn()}
+        onCustomInterestsChange={onCustomInterestsChange}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Escribe un interés personalizado"), { target: { value: "Tranvías históricos" } });
+    fireEvent.click(screen.getByRole("button", { name: "Añadir" }));
+    expect(onCustomInterestsChange).toHaveBeenLastCalledWith(["Gastronomía local", "Tranvías históricos"]);
+  });
+
+  it("permite deseleccionar una categoría seleccionada", () => {
+    const onSelectedChange = vi.fn();
+    const { rerender } = render(
+      <InterestPicker
+        selected={[]}
+        customInterests={[]}
+        onSelectedChange={onSelectedChange}
+        onCustomInterestsChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Fútbol" }));
+    expect(onSelectedChange).toHaveBeenLastCalledWith(["Fútbol"]);
+    rerender(
+      <InterestPicker
+        selected={["Fútbol"]}
+        customInterests={[]}
+        onSelectedChange={onSelectedChange}
+        onCustomInterestsChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Fútbol" }));
+    expect(onSelectedChange).toHaveBeenLastCalledWith([]);
+  });
+
   it("permite limpiar selecciones", () => {
     const onSelectedChange = vi.fn();
     const onCustomInterestsChange = vi.fn();

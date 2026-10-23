@@ -26,7 +26,7 @@ function fixture(items: GeneratedItineraryDraft["itinerary"]["days"][number]["it
   return {
     form: { origin: "Madrid", destination: "Roma", startDate: "2026-10-22", endDate: "2026-10-22", travelers: 1, budget: 100, currency: "EUR", interests: ["Historia"], travelType: "Cultural", pace: "equilibrado", notes: "" },
     itinerary: { destination: "Roma", durationDays: 1, budget: { total: 100, currency: "EUR", status: "provided" }, days: [{ id: "day-1", dayNumber: 1, date: "2026-10-22", theme: "Centro", summary: "", items }] },
-    source: "openrouter", generatedAt: "2026-10-22T00:00:00Z",
+    source: "openrouter", model: "nvidia/nemotron-3-ultra-550b-a55b:free", generatedAt: "2026-10-22T00:00:00Z",
   };
 }
 
@@ -43,6 +43,7 @@ describe("edición del itinerario", () => {
     render(<ItineraryPage />);
 
     expect(await screen.findByText("10:00–11:30")).toBeInTheDocument();
+    expect(screen.getByText(/OpenRouter · nvidia\/nemotron-3-ultra-550b-a55b:free/)).toBeInTheDocument();
     expect(screen.getByText("Elige las horas de cada actividad")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Editar actividad" }));
     fireEvent.change(screen.getByLabelText("Hora de finalización"), { target: { value: "12:00" } });

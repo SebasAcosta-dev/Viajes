@@ -44,6 +44,26 @@ describe("validación de persistencia", () => {
     expect(draft?.itinerary[0].items[0].estimate).toBeUndefined();
   });
 
+  it("valida presupuestos y actividades guardadas en COP sin alterar el importe", () => {
+    const copDraft = {
+      ...validDraft,
+      currency: "COP",
+      budget: 125000.5,
+      itinerary: [{
+        ...validDraft.itinerary[0],
+        items: [{ ...validDraft.itinerary[0].items[0], currency: "COP", estimate: 25000.75 }],
+      }],
+    };
+    expect(validateTripDraft(copDraft)).toMatchObject({ currency: "COP", budget: 125000.5 });
+    expect(validateExpense({
+      category: "Visitas",
+      description: "Entrada",
+      amount: 12500.25,
+      currency: "COP",
+      incurredOn: "2026-10-22",
+    })).toMatchObject({ amount: 12500.25, currency: "COP" });
+  });
+
   it("permite guardar actividades fuera del horario recomendado y rechaza cruces de medianoche", () => {
     const earlyAndLate = {
       ...validDraft,

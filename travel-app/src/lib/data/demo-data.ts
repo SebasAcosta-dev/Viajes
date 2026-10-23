@@ -4,7 +4,6 @@ export const interestOptions = [
   "Cultura",
   "Historia",
   "Naturaleza",
-  "Gastronomía",
   "Arquitectura",
   "Museos",
   "Playas",

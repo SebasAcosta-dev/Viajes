@@ -1,18 +1,87 @@
 import { describe, expect, it } from "vitest";
+import { interestOptions } from "@/lib/data/demo-data";
 import { allTravelInterests, interestCategories, resolveTripInterests } from "@/lib/interest-catalog";
 
 describe("catálogo de intereses de viaje", () => {
-  it("incluye las categorías solicitadas y una lista amplia de opciones", () => {
-    expect(interestCategories).toHaveLength(16);
-    expect(allTravelInterests).toContain("Fútbol");
-    expect(allTravelInterests).toContain("Mezquitas");
-    expect(allTravelInterests).toContain("Mercados tradicionales");
-    expect(allTravelInterests.length).toBeGreaterThan(100);
+  it("incluye exactamente las 15 categorías solicitadas y excluye las dos retiradas", () => {
+    expect(interestCategories).toEqual([
+      {
+        name: "Cultura e historia",
+        options: ["Historia", "Monumentos", "Patrimonio cultural", "Tradiciones locales", "Arqueología", "Historia antigua", "Historia medieval", "Historia moderna", "Visitas guiadas", "Barrios históricos"],
+      },
+      {
+        name: "Religión y patrimonio religioso",
+        options: ["Iglesias", "Catedrales", "Mezquitas", "Sinagogas", "Templos", "Monasterios", "Rutas religiosas", "Arquitectura religiosa", "Lugares de peregrinación"],
+      },
+      {
+        name: "Museos y arte",
+        options: ["Museos de historia", "Museos de arte", "Museos arqueológicos", "Museos científicos", "Arte contemporáneo", "Pintura", "Escultura", "Fotografía", "Galerías de arte", "Exposiciones temporales", "Artesanía tradicional"],
+      },
+      {
+        name: "Deportes",
+        options: ["Fútbol", "Baloncesto", "Tenis", "Fórmula 1", "Automovilismo", "Ciclismo", "Atletismo", "Estadios deportivos", "Museos deportivos", "Eventos deportivos", "Senderismo"],
+      },
+      {
+        name: "Naturaleza y actividades al aire libre",
+        options: ["Parques y jardines", "Montaña", "Senderismo", "Playas", "Naturaleza", "Reservas naturales", "Lagos y ríos", "Miradores naturales", "Rutas al aire libre"],
+      },
+      {
+        name: "Entretenimiento",
+        options: ["Parques temáticos", "Parques de atracciones", "Cines", "Teatros", "Conciertos", "Espectáculos", "Festivales", "Eventos culturales", "Vida nocturna"],
+      },
+      {
+        name: "Mercados y compras",
+        options: ["Mercados tradicionales", "Mercados locales", "Mercadillos", "Tiendas", "Centros comerciales", "Zonas comerciales", "Artesanía local"],
+      },
+      {
+        name: "Aventura y actividades",
+        options: ["Actividades de aventura", "Excursiones", "Rutas en bicicleta", "Actividades acuáticas", "Deportes de aventura", "Experiencias al aire libre"],
+      },
+      {
+        name: "Arquitectura y lugares emblemáticos",
+        options: ["Arquitectura", "Edificios históricos", "Monumentos emblemáticos", "Plazas", "Barrios emblemáticos", "Lugares icónicos", "Patrimonio arquitectónico"],
+      },
+      {
+        name: "Vida local",
+        options: ["Barrios locales", "Tradiciones locales", "Cultura popular", "Costumbres locales", "Espacios comunitarios", "Experiencias auténticas"],
+      },
+      {
+        name: "Ocio y entretenimiento",
+        options: ["Actividades de ocio", "Juegos y experiencias recreativas", "Salas de juegos", "Actividades familiares", "Experiencias interactivas"],
+      },
+      {
+        name: "Ciencia y tecnología",
+        options: ["Museos científicos", "Planetarios", "Observatorios", "Centros de ciencia", "Tecnología", "Innovación", "Espacio y astronomía"],
+      },
+      {
+        name: "Fotografía y miradores",
+        options: ["Miradores urbanos", "Miradores panorámicos", "Lugares fotográficos", "Paisajes", "Arquitectura fotogénica", "Atardeceres"],
+      },
+      {
+        name: "Relax y bienestar",
+        options: ["Spas", "Termas", "Balnearios", "Jardines tranquilos", "Espacios de relajación", "Centros de bienestar"],
+      },
+      {
+        name: "Familia",
+        options: ["Actividades familiares", "Actividades infantiles", "Parques infantiles", "Zoológicos", "Acuarios", "Museos interactivos para niños"],
+      },
+    ]);
+    expect(interestCategories).toHaveLength(15);
+    expect(allTravelInterests).not.toContain("Gastronomía local");
+    expect(allTravelInterests).not.toContain("Transporte histórico");
+    expect(allTravelInterests).not.toContain("Trenes históricos");
+    expect(allTravelInterests).not.toContain("Tranvías históricos");
+    expect(interestOptions).not.toContain("Gastronomía");
   });
 
-  it("prioriza intereses concretos del viaje sobre los del perfil y permite selecciones múltiples", () => {
+  it("prioriza los intereses del viaje y permite selecciones múltiples", () => {
     expect(resolveTripInterests(["Fútbol", "Arquitectura"], ["Historia"], ["Pádel"]))
       .toEqual(["Fútbol", "Arquitectura", "Pádel"]);
     expect(resolveTripInterests([], ["Historia"], [])).toEqual(["Historia"]);
+  });
+
+  it("conserva como personalizados intereses antiguos retirados del catálogo", () => {
+    expect(resolveTripInterests([], [], ["Gastronomía local", "Tranvías históricos"]))
+      .toEqual(["Gastronomía local", "Tranvías históricos"]);
   });
 });

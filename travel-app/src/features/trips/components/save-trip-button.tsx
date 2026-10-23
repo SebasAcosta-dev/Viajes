@@ -7,7 +7,7 @@ import { getPersistenceMode } from "@/lib/persistence/mode";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
 import type { TripDraft } from "@/lib/persistence/types";
 
-export function SaveTripButton({ draft }: { draft: TripDraft }) {
+export function SaveTripButton({ draft, generationRequestId }: { draft: TripDraft; generationRequestId?: string | null }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [savedLocation, setSavedLocation] = useState("");
@@ -20,7 +20,9 @@ export function SaveTripButton({ draft }: { draft: TripDraft }) {
     try {
       const scope = await getPlannerDraftScope();
       if (scope.startsWith("user:") && getPersistenceMode() === "supabase") {
-        await saveTrip(draft);
+        await (generationRequestId
+          ? saveTrip(draft, { generationRequestId })
+          : saveTrip(draft));
         setSavedLocation("Supabase");
         setSaved(true);
       } else if (getPersistenceMode() === "demo") {

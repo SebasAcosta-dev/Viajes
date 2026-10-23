@@ -60,13 +60,19 @@ describe("formulario del planificador", () => {
 
     const { container } = render(<TravelHome />);
     const submitButton = await screen.findByRole("button", { name: "Generar itinerario" });
+    const notesField = screen.getByLabelText("Notas para personalizar el viaje") as HTMLTextAreaElement;
+    expect(notesField).toHaveValue("");
+    expect(notesField).toHaveAttribute("placeholder", "Ej.: Me interesa la historia local, probar la gastronomía típica y recorrer los barrios a pie.");
+    expect(screen.queryByText("Previsualización del itinerario")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tipo de viaje")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ritmo")).not.toBeInTheDocument();
     expect(container.querySelectorAll("form")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Crear viaje paso a paso" })).toHaveAttribute("href", "/planificar");
     expect(screen.getByRole("link", { name: "Abrir el asistente IA" })).toHaveAttribute("href", "/ia");
     expect(screen.getByRole("link", { name: "Explorar destinos" })).toHaveAttribute("href", "/destinos");
     expect(screen.queryByText("Destinos destacados")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Mapa de actividades guardadas" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Abrir mapa interactivo" })).toHaveAttribute("href", "/mapa");
+    expect(screen.queryByRole("heading", { name: "Mapa de actividades guardadas" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Abrir mapa interactivo" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Accesos rápidos" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Presupuesto de próximos viajes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Preferencias del perfil" })).not.toBeInTheDocument();
@@ -82,17 +88,51 @@ describe("formulario del planificador", () => {
     fireEvent.change(startDate, { target: { value: movedStart } });
     expect(endDate.value).toBe(movedStart);
     fireEvent.change(endDate, { target: { value: addIsoDays(movedStart, 4) ?? movedStart } });
+    fireEvent.change(notesField, { target: { value: "Visitar el casco antiguo y probar platos locales." } });
+    fireEvent.change(screen.getByLabelText("Añadir otro interés"), { target: { value: "Pádel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Añadir" }));
     fireEvent.click(submitButton);
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/itinerario"));
     const request = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(request.context.origin).toBe("Madrid");
+    expect(request.context.destination).toBe("Marrakech");
     expect(request.context.interests).toContain("Historia");
+    expect(request.context.interests).toContain("Pádel");
     expect(request.context.startDate).toBe(movedStart);
     expect(request.context.endDate).toBe(addIsoDays(movedStart, 4));
     expect(request.context.travelers).toBeGreaterThan(0);
     expect(request.context.budget).toBeGreaterThan(0);
     expect(request.context.currency).toBe("EUR");
+    expect(request.context.notes).toBe("Visitar el casco antiguo y probar platos locales.");
+    expect(request.context).not.toHaveProperty("travelType");
+    expect(request.context).not.toHaveProperty("pace");
+    expect(request.message).toContain("Visitar el casco antiguo y probar platos locales.");
+    expect(request.message).toContain("Pádel");
     expect(request.message).toContain("5 días");
+  });
+
+  it("envía COP como moneda seleccionada sin convertir el presupuesto", async () => {
+    getPlannerDraftScopeMock.mockResolvedValue("anonymous");
+    getProfilePreferencesMock.mockResolvedValue(profile);
+    listTripSummariesMock.mockResolvedValue([]);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ source: "demo", text: "Respuesta demo" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TravelHome />);
+    const submitButton = await screen.findByRole("button", { name: "Generar itinerario" });
+    const currency = screen.getByLabelText("Moneda");
+    expect(screen.getByRole("option", { name: "COP — Peso colombiano" })).toBeInTheDocument();
+    fireEvent.change(currency, { target: { value: "COP" } });
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/itinerario"));
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(request.context.currency).toBe("COP");
+    expect(request.context.budget).toBe(800);
   });
 
   it("resume hasta tres viajes próximos y enlaza con el listado completo", async () => {

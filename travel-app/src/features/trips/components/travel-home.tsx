@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InterestPicker } from "@/features/itinerary/components/interest-picker";
+import { LocationAutocomplete } from "@/features/trips/components/location-autocomplete";
 import { defaultProfile, destinations } from "@/lib/data/demo-data";
 import { generateItineraryFromTrip } from "@/lib/itinerary";
 import { addDailySchedules } from "@/lib/itinerary-schedule";
@@ -15,6 +16,8 @@ import { loadTripFormDraft, saveGeneratedItinerary, saveTripFormDraft } from "@/
 import { formatTripPeriod } from "@/lib/date-format";
 import { localTodayIso, normalizeNewDateRange } from "@/lib/trip-dates";
 import { useLocalToday } from "@/lib/hooks/use-local-today";
+import { CURRENCY_OPTIONS, currencyFractionDigits } from "@/lib/currency-catalog";
+import { formatMoney } from "@/lib/money";
 import type { SavedTripSummary } from "@/lib/persistence/types";
 import type { ProfilePreferences, TripFormValues } from "@/lib/types";
 
@@ -27,9 +30,7 @@ const defaultForm: TripFormValues = {
   budget: 800,
   currency: "EUR",
   interests: [],
-  travelType: "Cultural",
-  pace: "equilibrado",
-  notes: "Quiero una mezcla de historia, gastronomía y paseo por la ciudad.",
+  notes: "",
 };
 
 function updateNewTripDates(form: TripFormValues, startDate: string, endDate: string, today: string): TripFormValues {
@@ -91,7 +92,7 @@ export function TravelHome() {
           setCustomInterests(savedProfile.interests.filter((interest) => !(allTravelInterests as readonly string[]).includes(interest)));
           setForm((current) => ({
             ...current,
-            ...(!hasSavedFormRef.current ? { currency: savedProfile.currency, pace: savedProfile.pace } : {}),
+            ...(!hasSavedFormRef.current ? { currency: savedProfile.currency } : {}),
             interests: savedProfile.interests.filter((interest) => (allTravelInterests as readonly string[]).includes(interest)),
           }));
         }
@@ -114,12 +115,6 @@ export function TravelHome() {
       .catch((error: unknown) => setPersistenceError(error instanceof Error ? error.message : "No se pudo guardar el borrador del formulario."));
   }, [effectiveForm, customInterests, draftScope]);
 
-  const itineraryPreview = useMemo(() => {
-    const interests = interestSelectionTouched
-      ? resolveTripInterests(effectiveForm.interests, [], customInterests)
-      : profile.interests;
-    return generateItineraryFromTrip(selectedDestination, { ...effectiveForm, interests });
-  }, [selectedDestination, effectiveForm, profile.interests, interestSelectionTouched, customInterests]);
   const upcomingTrips = useMemo(() => {
     return savedTrips
       .filter((trip) => trip.startDate && (!trip.endDate || trip.endDate >= today))
@@ -158,8 +153,6 @@ export function TravelHome() {
             interests,
             budget: requestForm.budget,
             currency: requestForm.currency,
-            travelType: requestForm.travelType,
-            pace: requestForm.pace,
             notes: requestForm.notes,
           },
         }),
@@ -179,20 +172,26 @@ export function TravelHome() {
         : undefined;
       const source = data.source === "openrouter" ? "openrouter" : "demo";
       if (!itinerary && source === "demo") {
-        const destination = destinations.find((entry) => entry.name.toLocaleLowerCase("es") === requestForm.destination.toLocaleLowerCase("es"));
-        if (destination) {
-          const scheduledDays = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
-          if (!scheduledDays) throw new Error("Las actividades de demostración no caben dentro del mismo día.");
-          itinerary = {
-            destination: destination.name,
-            durationDays,
-            startDate: requestForm.startDate,
-            endDate: requestForm.endDate,
-            travelers: requestForm.travelers,
-            budget: { total: requestForm.budget, currency: requestForm.currency, status: "provided" },
-            days: scheduledDays,
-          };
-        }
+        const localDestination = destinations.find((entry) => entry.name.toLocaleLowerCase("es") === requestForm.destination.toLocaleLowerCase("es"));
+        const destination = localDestination ?? {
+          name: requestForm.destination,
+          places: [],
+          ...(requestForm.destinationLocation?.name === requestForm.destination && requestForm.destinationLocation.latitude !== undefined
+            && requestForm.destinationLocation.longitude !== undefined
+            ? { lat: requestForm.destinationLocation.latitude, lng: requestForm.destinationLocation.longitude }
+            : {}),
+        };
+        const scheduledDays = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
+        if (!scheduledDays) throw new Error("Las actividades de demostración no caben dentro del mismo día.");
+        itinerary = {
+          destination: destination.name,
+          durationDays,
+          startDate: requestForm.startDate,
+          endDate: requestForm.endDate,
+          travelers: requestForm.travelers,
+          budget: { total: requestForm.budget, currency: requestForm.currency, status: "provided" },
+          days: scheduledDays,
+        };
       }
       if (!itinerary) {
         const warning = "warning" in data && typeof data.warning === "string" ? ` ${data.warning}` : "";
@@ -239,12 +238,7 @@ export function TravelHome() {
                 <p className="mt-3 text-2xl font-bold">{upcomingTrips[0].destination}</p>
                 <p className="mt-1 text-sm text-emerald-50/90">{upcomingTrips[0].name}</p>
                 <p className="mt-4 text-sm">{formatTripPeriod(upcomingTrips[0].startDate, upcomingTrips[0].endDate)}</p>
-                <p className="mt-2 text-sm">
-                  Presupuesto: {new Intl.NumberFormat("es-ES", {
-                    style: "currency",
-                    currency: upcomingTrips[0].currency,
-                  }).format(upcomingTrips[0].budget)}
-                </p>
+                <p className="mt-2 text-sm">Presupuesto: {formatMoney(upcomingTrips[0].budget, upcomingTrips[0].currency)}</p>
                 <Link href={`/viajes#trip-${encodeURIComponent(upcomingTrips[0].id)}`} className="mt-4 inline-block rounded-full bg-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/25">
                   Abrir viaje
                 </Link>
@@ -279,7 +273,7 @@ export function TravelHome() {
                           <span className="mt-0.5 block truncate text-xs text-slate-600">{trip.name} · {formatTripPeriod(trip.startDate, trip.endDate)}</span>
                         </span>
                         <span className="shrink-0 text-right text-sm font-semibold text-slate-800">
-                          {new Intl.NumberFormat("es-ES", { style: "currency", currency: trip.currency }).format(trip.budget)}
+                          {formatMoney(trip.budget, trip.currency)}
                           <span className="block text-[0.7rem] font-normal text-slate-500">presupuesto</span>
                         </span>
                       </Link>
@@ -313,14 +307,18 @@ export function TravelHome() {
             </div>
 
             <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:gap-x-5 xl:gap-y-4">
-              <label className="text-sm font-medium text-slate-700">
-                Origen
-                <input value={form.origin} onChange={(e) => setForm({ ...form, origin: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-              </label>
-              <label className="text-sm font-medium text-slate-700">
-                Destino
-                <input value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-              </label>
+              <LocationAutocomplete
+                label="Origen"
+                value={form.origin}
+                onChange={(origin) => setForm((current) => ({ ...current, origin, originLocation: undefined }))}
+                onSelectionChange={(originLocation) => setForm((current) => ({ ...current, originLocation }))}
+              />
+              <LocationAutocomplete
+                label="Destino"
+                value={form.destination}
+                onChange={(destination) => setForm((current) => ({ ...current, destination, destinationLocation: undefined }))}
+                onSelectionChange={(destinationLocation) => setForm((current) => ({ ...current, destinationLocation }))}
+              />
               <label className="text-sm font-medium text-slate-700">
                 Fecha de salida
                 <input type="date" min={today} value={effectiveForm.startDate} onChange={(e) => setForm((current) => updateNewTripDates(current, e.target.value, current.endDate, today))} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
@@ -333,40 +331,18 @@ export function TravelHome() {
                 Viajeros
                 <input type="number" min={1} value={form.travelers} onChange={(e) => setForm({ ...form, travelers: Number(e.target.value) || 1 })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
               </label>
-              <label className="text-sm font-medium text-slate-700">
-                Presupuesto para actividades y visitas
-                <input type="number" min={1} value={form.budget} onChange={(e) => setForm({ ...form, budget: Number(e.target.value) || 1 })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-              </label>
-              <label className="text-sm font-medium text-slate-700">
-                Moneda
-                <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as TripFormValues["currency"] })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                  <option value="EUR">EUR</option>
-                  <option value="USD">USD</option>
-                  <option value="GBP">GBP</option>
-                  <option value="MAD">MAD</option>
-                </select>
-              </label>
-              <label className="text-sm font-medium text-slate-700">
-                Tipo de viaje
-                <select value={form.travelType} onChange={(e) => setForm({ ...form, travelType: e.target.value as TripFormValues["travelType"] })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                  <option value="Cultural">Cultural</option>
-                  <option value="Económico">Económico</option>
-                  <option value="Gastronómico">Gastronómico</option>
-                  <option value="Naturaleza">Naturaleza</option>
-                  <option value="Relax">Relax</option>
-                  <option value="Aventura">Aventura</option>
-                  <option value="Familiar">Familiar</option>
-                  <option value="Combinado">Combinado</option>
-                </select>
-              </label>
-              <label className="text-sm font-medium text-slate-700">
-                Ritmo
-                <select value={form.pace} onChange={(e) => setForm({ ...form, pace: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                  <option value="lento">Tranquilo</option>
-                  <option value="equilibrado">Equilibrado</option>
-                  <option value="rápido">Activo</option>
-                </select>
-              </label>
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_11rem]">
+                <label className="text-sm font-medium text-slate-700">
+                  Presupuesto para actividades y visitas
+                  <input type="number" min={1} step={10 ** -currencyFractionDigits(form.currency)} value={form.budget} onChange={(e) => setForm({ ...form, budget: Number(e.target.value) || 1 })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+                </label>
+                <label className="text-sm font-medium text-slate-700">
+                  Moneda
+                  <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as TripFormValues["currency"] })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5">
+                    {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
+                  </select>
+                </label>
+              </div>
             </div>
 
             <div className="mt-4">
@@ -389,21 +365,9 @@ export function TravelHome() {
             </div>
             <label className="mt-4 block text-sm font-medium text-slate-700">
               Notas para personalizar el viaje
-              <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} maxLength={1000} rows={3} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+              <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Ej.: Me interesa la historia local, probar la gastronomía típica y recorrer los barrios a pie." maxLength={1000} rows={3} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
             </label>
             <p className="mt-2 text-xs text-slate-500">El presupuesto cubre solo visitas y actividades turísticas. No incluye transporte, alojamiento, compras personales ni comidas.</p>
-
-            <div className="mt-4 rounded-xl bg-slate-50 p-4">
-              <p className="text-sm font-medium text-slate-700">Previsualización del itinerario</p>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                {itineraryPreview.slice(0, 3).map((day) => (
-                  <li key={day.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2">
-                    <span>{day.theme}</span>
-                    <span>{day.items.length} actividades</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
 
             {errors.length > 0 && (
               <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -431,13 +395,6 @@ export function TravelHome() {
           </p>
         )}
 
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
-          <div className="min-w-0">
-            <h2 className="font-semibold text-slate-900">Mapa de actividades guardadas</h2>
-            <p className="mt-0.5 text-sm text-slate-600">Consulta en el mapa las ubicaciones guardadas en tus itinerarios.</p>
-          </div>
-          <Link href="/mapa" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Abrir mapa interactivo</Link>
-        </section>
       </main>
     </div>
   );

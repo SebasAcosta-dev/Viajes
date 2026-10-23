@@ -1,7 +1,7 @@
 import type { Currency } from "@/lib/types";
+import { CURRENCY_CODES, currencyFractionDigits } from "@/lib/currency-catalog";
 
-const MINOR_UNIT_FACTOR = 100;
-const MONEY_CURRENCIES = new Set<Currency>(["EUR", "USD", "GBP", "MAD"]);
+const MONEY_CURRENCIES = new Set<Currency>(CURRENCY_CODES);
 
 export type MinorUnits = number & { readonly __minorUnits: unique symbol };
 
@@ -10,7 +10,7 @@ export function requireCurrency(value: string): Currency {
   return value as Currency;
 }
 
-function decimalToMinorUnits(amount: number): number {
+function decimalToMinorUnits(amount: number, fractionDigits: number): number {
   if (!Number.isFinite(amount)) throw new RangeError("El importe debe ser un número finito.");
   const value = amount.toString();
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(value);
@@ -20,7 +20,7 @@ function decimalToMinorUnits(amount: number): number {
   const fraction = match[3] ?? "";
   const exponent = Number(match[4] ?? 0);
   const digits = `${match[2]}${fraction}`.replace(/^0+(?=\d)/, "");
-  const shift = exponent - fraction.length + 2;
+  const shift = exponent - fraction.length + fractionDigits;
   let absoluteMinorUnits: number;
   if (shift >= 0) {
     const expanded = `${digits}${"0".repeat(shift)}`;
@@ -41,13 +41,13 @@ function decimalToMinorUnits(amount: number): number {
 export function toMinorUnits(amount: number, currency: Currency): MinorUnits {
   if (!MONEY_CURRENCIES.has(currency)) throw new RangeError("La moneda no está admitida.");
   if (amount < 0) throw new RangeError("El importe no puede ser negativo.");
-  return decimalToMinorUnits(amount) as MinorUnits;
+  return decimalToMinorUnits(amount, currencyFractionDigits(currency)) as MinorUnits;
 }
 
 export function fromMinorUnits(amount: number, currency: Currency): number {
   if (!MONEY_CURRENCIES.has(currency)) throw new RangeError("La moneda no está admitida.");
   if (!Number.isSafeInteger(amount)) throw new RangeError("El importe en unidades menores no es válido.");
-  return amount / MINOR_UNIT_FACTOR;
+  return amount / (10 ** currencyFractionDigits(currency));
 }
 
 export function addMinorUnits(left: MinorUnits, right: MinorUnits): MinorUnits {
@@ -71,5 +71,11 @@ export function sumAmountsInMinorUnits(amounts: readonly number[], currency: Cur
 }
 
 export function formatMoney(amount: number, currency: Currency, locale = "es-ES"): string {
-  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(amount);
+  const fractionDigits = currencyFractionDigits(currency);
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(amount);
 }

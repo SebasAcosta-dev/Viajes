@@ -290,10 +290,13 @@ describe("persistencia Supabase", () => {
       }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(saveTrip(draft)).resolves.toMatchObject({ id: "trip-remote-1" });
+    await expect(saveTrip(draft, { generationRequestId: "generation-trace-1" })).resolves.toMatchObject({ id: "trip-remote-1" });
     await expect(listTrips()).resolves.toMatchObject([{ id: "trip-remote-1", name: draft.name }]);
     await expect(listTrips()).resolves.toMatchObject([{ id: "trip-remote-1", name: draft.name }]);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/trips");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "X-Generation-Request-Id": "generation-trace-1",
+    });
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({
       startDate: today,
       endDate: today,

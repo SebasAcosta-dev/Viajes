@@ -1,8 +1,24 @@
-import { Currency, Destination, ItineraryDay, ItineraryItem, TripFormValues } from "@/lib/types";
+import { Currency, Destination, ItineraryDay, ItineraryItem, Place, TripFormValues } from "@/lib/types";
 import { addMinorUnits, fromMinorUnits, toMinorUnits } from "@/lib/money";
 
 const interestKeywords: Record<string, string[]> = {
   "historia": ["histor", "medina", "palacio", "monumento", "ruina", "museo", "patrimonio"],
+  "patrimonio cultural": ["histor", "cultural", "medina", "monumento", "patrimonio"],
+  "iglesias y catedrales": ["iglesia", "church", "catedral", "basilica"],
+  "templos y lugares religiosos": ["templo", "mezquita", "mosque", "sinagoga", "monasterio"],
+  "museos": ["museo", "museum", "galeria"],
+  "arte y exposiciones": ["arte", "art", "exposicion", "galeria", "museo"],
+  "otros deportes": ["deporte", "sport", "estadio", "arena"],
+  "eventos deportivos": ["deporte", "sport", "estadio", "evento", "partido"],
+  "parques y jardines": ["parque", "jardin", "garden", "bosque"],
+  "montaña y senderismo": ["montana", "mountain", "sender", "hiking", "ruta"],
+  "playas y naturaleza": ["playa", "beach", "costa", "naturaleza", "parque natural"],
+  "ocio y entretenimiento": ["ocio", "entretenimiento", "parque tematico", "diversion"],
+  "eventos y espectáculos": ["evento", "espectaculo", "concierto", "teatro", "festival"],
+  "mercados": ["mercado", "market", "zoco", "souk"],
+  "tiendas y zonas comerciales": ["tienda", "comercial", "shopping", "mercado", "zoco"],
+  "arquitectura": ["arquitect", "palacio", "historic", "monumento", "edificio"],
+  "barrios y lugares emblemáticos": ["barrio", "medina", "centro", "emblematico", "historic"],
   "parques naturales": ["parque", "jardin", "garden", "bosque", "naturaleza"],
   "fútbol": ["futbol", "football", "soccer", "estadio", "deportivo"],
   "mercados tradicionales": ["mercado", "market", "zoco", "souk"],
@@ -32,7 +48,7 @@ function normalizeInterestText(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es");
 }
 
-function interestsForPlace(place: Destination["places"][number], interests: string[]): string[] {
+function interestsForPlace(place: Pick<Place, "name" | "category" | "description">, interests: string[]): string[] {
   const description = normalizeInterestText(`${place.name} ${place.category} ${place.description}`);
   return interests.filter((interest) => {
     const normalizedInterest = normalizeInterestText(interest);
@@ -42,7 +58,10 @@ function interestsForPlace(place: Destination["places"][number], interests: stri
   });
 }
 
-export function generateItineraryFromTrip(destination: Destination, form: TripFormValues): ItineraryDay[] {
+export function generateItineraryFromTrip(
+  destination: Pick<Destination, "name" | "places"> & Partial<Pick<Destination, "lat" | "lng">>,
+  form: TripFormValues,
+): ItineraryDay[] {
   const days: ItineraryDay[] = [];
   const startTime = Date.parse(`${form.startDate}T00:00:00Z`);
   const endTime = Date.parse(`${form.endDate}T00:00:00Z`);
@@ -51,15 +70,17 @@ export function generateItineraryFromTrip(destination: Destination, form: TripFo
   const matchingPlaces = form.interests.length
     ? destination.places.filter((place) => interestsForPlace(place, form.interests).length > 0)
     : destination.places;
-  const places: Destination["places"] = matchingPlaces.length
+  const places: Array<Omit<Place, "lat" | "lng"> & Partial<Pick<Place, "lat" | "lng">>> = matchingPlaces.length
     ? matchingPlaces
     : [{
         id: "fallback-place",
         name: "Paseo recomendado",
         description: "No hay lugares locales asociados a los intereses seleccionados; consulta el asistente para alternativas.",
         category: "General",
-        lat: destination.lat,
-        lng: destination.lng,
+        ...(typeof destination.lat === "number" && Number.isFinite(destination.lat)
+          && typeof destination.lng === "number" && Number.isFinite(destination.lng)
+          ? { lat: destination.lat, lng: destination.lng }
+          : {}),
         address: destination.name,
         ticketEstimate: 0,
         currency: form.currency,
@@ -86,8 +107,10 @@ export function generateItineraryFromTrip(destination: Destination, form: TripFo
       priceStatus: hasEstimate ? "estimate" : "unknown",
       currency: place.currency,
       order: index + 1,
-      lat: place.lat,
-      lng: place.lng,
+      ...(typeof place.lat === "number" && Number.isFinite(place.lat)
+        && typeof place.lng === "number" && Number.isFinite(place.lng)
+        ? { lat: place.lat, lng: place.lng }
+        : {}),
       notes: `${place.source} (información orientativa) · ${place.address}`,
       source: "orientativo",
       ...(matchedInterests.length ? { interestTags: matchedInterests } : {}),
@@ -100,7 +123,7 @@ export function generateItineraryFromTrip(destination: Destination, form: TripFo
       dayNumber: dayIndex + 1,
       date: dateISO,
       theme,
-      summary: `Plan ${theme.toLowerCase()} para ${destination.name} con foco en ${form.travelType.toLowerCase()}.`,
+      summary: `Plan ${theme.toLowerCase()} para ${destination.name}${form.travelType ? ` con foco en ${form.travelType.toLowerCase()}` : ""}.`,
       items,
     });
   }
