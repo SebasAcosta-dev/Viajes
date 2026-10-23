@@ -1,8 +1,8 @@
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
+import { updateSupabaseSession } from "@/lib/supabase/proxy";
 
 export async function proxy(request: NextRequest) {
-  // Private APIs validate with getUser; the browser Supabase client refreshes client-side sessions.
-  return NextResponse.next({ request });
+  return updateSupabaseSession(request);
 }
 
 export const config = {
