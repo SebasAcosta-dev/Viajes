@@ -172,23 +172,54 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const generationId = request.headers.get("X-Generation-Request-Id");
+  const requestId = generationId && /^[A-Za-z0-9_-]{1,80}$/.test(generationId)
+    ? generationId
+    : globalThis.crypto?.randomUUID?.() ?? `trip-save-${Date.now()}`;
   try {
     const { supabase, user } = await getAuthenticatedSupabase();
     const parsedBody = await parseJsonBody(request, tripDraftRequestSchema, "El cuerpo de la solicitud debe ser JSON válido.");
     if (!parsedBody.ok) return parsedBody.response;
     const parsedDraft = parsedBody.data;
     const draft = normalizeNewTripDates(parsedDraft, requestTodayIso(request));
-    const result = await saveTripWithItinerary(supabase, user.id, draft);
+    const persistenceStartedAt = Date.now();
+    let result: Awaited<ReturnType<typeof saveTripWithItinerary>>;
+    try {
+      result = await saveTripWithItinerary(supabase, user.id, draft);
+    } catch (error: unknown) {
+      console.warn("Trip persistence failed", {
+        requestId,
+        stage: "supabase_persistence",
+        durationMs: Date.now() - persistenceStartedAt,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      throw error;
+    }
     if (result.kind === "missing-migration") {
+      console.warn("Trip persistence incomplete", {
+        requestId, stage: "supabase_persistence", outcome: result.kind,
+        durationMs: Date.now() - persistenceStartedAt,
+      });
       return Response.json({ error: result.message }, { status: 503 });
     }
     if (result.kind === "not-confirmed") {
+      console.warn("Trip persistence incomplete", {
+        requestId, stage: "supabase_persistence", outcome: result.kind,
+        durationMs: Date.now() - persistenceStartedAt,
+      });
       return Response.json({ error: "Supabase no confirmó la creación del viaje." }, { status: 502 });
     }
     const savedTrip = mapTrip(result.row);
     if (!persistedItineraryMatchesDraft(savedTrip, draft)) {
+      console.warn("Trip persistence mismatch", {
+        requestId, stage: "supabase_confirmation", durationMs: Date.now() - persistenceStartedAt,
+      });
       return Response.json({ error: "Supabase no confirmó todos los días, actividades y horarios del itinerario." }, { status: 502 });
     }
+    console.info("Trip persistence completed", {
+      requestId, stage: "supabase_persistence", outcome: "confirmed",
+      durationMs: Date.now() - persistenceStartedAt,
+    });
     return Response.json({ trip: savedTrip }, { status: 201 });
   } catch (error) {
     return persistenceErrorResponse(error, "trips.create");

@@ -5,7 +5,7 @@ import { addIsoDays, formatIsoDate } from "@/lib/date-format";
 import { createTripGroup, listTrips, listTripGroups } from "@/lib/persistence/client";
 import { getPlannerDraftScope } from "@/lib/persistence/profile-client";
 import { getTripBudgetSummary } from "@/lib/itinerary";
-import { sumAmountsInMinorUnits } from "@/lib/money";
+import { formatMoney, sumAmountsInMinorUnits } from "@/lib/money";
 import type { SavedTrip, SavedTripGroup, TripGroupItem } from "@/lib/persistence/types";
 
 interface SelectedTrip extends TripGroupItem {
@@ -40,7 +40,7 @@ export function analyzeTripGroupDates(items: SelectedTrip[]): DateRelation[] {
 }
 
 function money(value: number, currency: SavedTrip["currency"]): string {
-  return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(value);
+  return formatMoney(value, currency);
 }
 
 export function CombinedTripPlanner() {

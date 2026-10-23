@@ -7,6 +7,7 @@ import { getProfilePreferences, saveProfilePreferences } from "@/lib/persistence
 import { persistenceLabel } from "@/lib/persistence/client";
 import type { ProfilePreferences, TravelType } from "@/lib/types";
 import { allTravelInterests } from "@/lib/interest-catalog";
+import { CURRENCY_OPTIONS } from "@/lib/currency-catalog";
 
 const emptyPreferences: ProfilePreferences = {
   name: "",
@@ -78,7 +79,7 @@ export function ProfilePreferencesForm() {
             </label>
             <label className="text-sm font-medium text-slate-700">Moneda preferida
               <select value={preferences.currency} onChange={(event) => setPreferences({ ...preferences, currency: event.target.value as ProfilePreferences["currency"] })} className="mt-1 block min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => <option key={currency}>{currency}</option>)}
+                {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
               </select>
             </label>
             <label className="text-sm font-medium text-slate-700">Ritmo habitual

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Currency, ItineraryDay, ItineraryItem } from "@/lib/types";
+import { CURRENCY_CODES } from "@/lib/currency-catalog";
 import { addDailySchedules } from "@/lib/itinerary-schedule";
 import { getPublicEnvironment } from "@/lib/env";
 import { getServerEnvironment } from "@/lib/env.server";
@@ -59,6 +60,11 @@ export interface AssistantReply {
   activityAlternatives?: ActivityAlternative[];
 }
 
+export interface AssistantGenerationOptions {
+  requestId?: string;
+  signal?: AbortSignal;
+}
+
 export class AssistantProviderError extends Error {
   constructor(
     message: string,
@@ -69,14 +75,15 @@ export class AssistantProviderError extends Error {
   }
 }
 
-const DEFAULT_MODEL = "minimax/minimax-m3.1-flash:free";
+const DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_RESPONSE_TIMEOUT_MS = 150_000;
 const MAX_OUTPUT_TOKENS = 8192;
 const MAX_DAYS_PER_COMPLETION = 4;
 const MAX_CONTINUATIONS = 2;
-const MAX_JSON_REPAIRS = 2;
+const MAX_JSON_REPAIRS = 1;
 const MAX_COMPLETION_LENGTH = 30_000;
-const SUPPORTED_CURRENCIES: Currency[] = ["EUR", "USD", "GBP", "MAD"];
+const SUPPORTED_CURRENCIES: Currency[] = [...CURRENCY_CODES];
 const ITINERARY_BLOCK_TYPES = ["activity", "travel", "breakfast", "lunch", "dinner", "rest", "free_time"] as const;
 const SYSTEM_PROMPT =
   "Eres un asistente de viajes experto. Responde siempre en español. No inventes datos verificados, horarios actuales ni precios exactos; todo coste no confirmado debe identificarse como estimación. Mantén las respuestas concisas y bien estructuradas.";
@@ -119,7 +126,53 @@ interface CompletionResult {
   finishReason: string | null;
   model?: string;
   httpStatus: number;
+  durationMs: number;
   usage?: OpenRouterResponse["usage"];
+}
+
+type CompletionPurpose = "initial" | "continuation" | "repair";
+
+interface GenerationTrace {
+  requestId: string;
+  startedAt: number;
+  model?: string;
+  modelCalls: number;
+  repairCalls: number;
+  continuationCalls: number;
+  providerWaitMs: number;
+  providerBodyMs: number;
+  providerResponseParseMs: number;
+  itineraryParseMs: number;
+  validationMs: number;
+  repairWaitMs: number;
+  continuationWaitMs: number;
+  promptCharacters: number;
+  promptTokens: number;
+  completionTokens: number;
+  transientRetries: number;
+}
+
+function createGenerationTrace(requestId?: string): GenerationTrace {
+  return {
+    requestId: requestId && /^[\w-]{1,80}$/.test(requestId)
+      ? requestId
+      : globalThis.crypto?.randomUUID?.() ?? `ai-${Date.now()}`,
+    startedAt: Date.now(),
+    modelCalls: 0,
+    repairCalls: 0,
+    continuationCalls: 0,
+    providerWaitMs: 0,
+    providerBodyMs: 0,
+    providerResponseParseMs: 0,
+    itineraryParseMs: 0,
+    validationMs: 0,
+    repairWaitMs: 0,
+    continuationWaitMs: 0,
+    promptCharacters: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    transientRetries: 0,
+  };
 }
 
 interface JsonParseResult {
@@ -155,28 +208,9 @@ function demoReply(message: string, context?: AssistantContext): AssistantReply 
   };
 }
 
-function safeProviderMessage(value: unknown, apiKey: string): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const safe = value
-    .replaceAll(apiKey, "[redacted]")
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/\bsk-or-v1-[A-Za-z0-9_-]+/gi, "[redacted]")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 300);
-  return safe || undefined;
-}
-
 function safeProviderModel(value: unknown): string | undefined {
   if (typeof value !== "string" || !/^[A-Za-z0-9._:/-]{1,160}$/.test(value)) return undefined;
   return value;
-}
-
-function getErrorMessage(error: OpenRouterResponse["error"]): unknown {
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") return error.message;
-  return undefined;
 }
 
 function getErrorCode(error: OpenRouterResponse["error"]): number | string | undefined {
@@ -189,27 +223,50 @@ function statusFromProviderCode(value: number | string | undefined): number | un
   return Number.isInteger(code) && code >= 400 && code <= 599 ? code : undefined;
 }
 
-export function mapOpenRouterError(status: number, providerMessage?: string): AssistantProviderError {
-  const details = providerMessage ? ` Detalle: ${providerMessage}` : "";
-  if (status === 401) return new AssistantProviderError(`OpenRouter rechazó la autenticación. Revisa AI_API_KEY.${details}`, status);
-  if (status === 402) return new AssistantProviderError(`OpenRouter indica saldo o créditos insuficientes.${details}`, status);
-  if (status === 403) return new AssistantProviderError(`OpenRouter bloqueó la solicitud por permisos, límites de gasto o configuración de la cuenta.${details}`, status);
-  if (status === 404) return new AssistantProviderError(`El modelo o la ruta no están disponibles en OpenRouter. Revisa AI_MODEL.${details}`, status);
-  if (status === 429) return new AssistantProviderError(`OpenRouter limitó las solicitudes. Espera un momento y vuelve a intentarlo.${details}`, status);
-  if (status >= 500) return new AssistantProviderError(`OpenRouter o el proveedor del modelo devolvió un error temporal.${details}`, status);
-  return new AssistantProviderError(`OpenRouter rechazó la solicitud (HTTP ${status}).${details}`, status);
+export function mapOpenRouterError(status: number): AssistantProviderError {
+  if (status === 401) return new AssistantProviderError("OpenRouter rechazó la autenticación. Revisa la configuración del proveedor.", status);
+  if (status === 402) return new AssistantProviderError("OpenRouter indica que no hay créditos disponibles para esta solicitud.", status);
+  if (status === 403) return new AssistantProviderError("OpenRouter bloqueó la solicitud por permisos o límites de cuenta.", status);
+  if (status === 404) return new AssistantProviderError("El modelo configurado no está disponible en OpenRouter.", status);
+  if (status === 429) return new AssistantProviderError("OpenRouter limitó las solicitudes. Espera un momento y vuelve a intentarlo.", status);
+  if (status >= 500) return new AssistantProviderError("OpenRouter o el proveedor del modelo devolvió un error temporal.", status);
+  return new AssistantProviderError(`OpenRouter rechazó la solicitud (HTTP ${status}).`, status);
 }
 
-async function readJsonResponse(response: Response): Promise<OpenRouterResponse | undefined> {
+interface OpenRouterBodyRead {
+  data?: OpenRouterResponse;
+  state: "valid" | "empty" | "invalid_json" | "non_object" | "read_error";
+  bodyCharacters: number;
+  readDurationMs: number;
+  parseDurationMs: number;
+}
+
+async function readJsonResponse(response: Response): Promise<OpenRouterBodyRead> {
+  const readStartedAt = Date.now();
+  let body: string;
   try {
-    const body: unknown = await response.json();
-    if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-      return body as OpenRouterResponse;
-    }
+    body = await response.text();
   } catch {
-    return undefined;
+    return { state: "read_error", bodyCharacters: 0, readDurationMs: Date.now() - readStartedAt, parseDurationMs: 0 };
   }
-  return undefined;
+
+  const readDurationMs = Date.now() - readStartedAt;
+  if (!body.trim()) return { state: "empty", bodyCharacters: 0, readDurationMs, parseDurationMs: 0 };
+
+  const parseStartedAt = Date.now();
+  let value: unknown;
+  try {
+    value = JSON.parse(body) as unknown;
+  } catch {
+    return {
+      state: "invalid_json", bodyCharacters: body.length, readDurationMs, parseDurationMs: Date.now() - parseStartedAt,
+    };
+  }
+  const parseDurationMs = Date.now() - parseStartedAt;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { state: "non_object", bodyCharacters: body.length, readDurationMs, parseDurationMs };
+  }
+  return { data: value as OpenRouterResponse, state: "valid", bodyCharacters: body.length, readDurationMs, parseDurationMs };
 }
 
 function extractText(content: string | Array<{ type?: string; text?: string }> | null | undefined): string | undefined {
@@ -242,79 +299,43 @@ function itineraryPrompt(message: string, context?: AssistantContext): string {
   const requestedDays = requestedDaysFromContext(context) ?? requestedDaysFromMessage(message) ?? 1;
   const currency = context?.currency ?? "EUR";
   const itinerarySchema = {
-    destination: context?.destination ?? "Destino",
+    destination: "string",
     duration_days: requestedDays,
-    budget: { total: context?.budget ?? 0, currency, status: "estimated" },
-    days: Array.from({ length: requestedDays }, (_, index) => ({
-      day: index + 1,
-      title: `Título del día ${index + 1}`,
-      activities: [
-        {
-          name: "Desayuno libre",
-          description: "Pausa para desayunar, sin recomendar un establecimiento.",
-          type: "breakfast",
-          start_time: "09:00",
-          end_time: "09:45",
-          estimated_duration_minutes: 45,
-          price_status: "unknown",
-          budget_category: "gastronomy",
-          currency,
-          reliability: "estimated",
-        },
-        {
-          name: "Visita",
-          description: "Actividad orientativa.",
-          type: "activity",
-          start_time: "10:00",
-          end_time: "11:30",
-          estimated_duration_minutes: 90,
-          price_status: "unknown",
-          budget_category: "activity",
-          interest_tags: context?.interests?.length ? [context.interests[0]] : [],
-          currency,
-          reliability: "unknown",
-        },
-        {
-          name: "Tiempo para almorzar",
-          description: "Pausa flexible para comer.",
-          type: "lunch",
-          start_time: "13:00",
-          end_time: "14:00",
-          estimated_duration_minutes: 60,
-          price_status: "unknown",
-          budget_category: "gastronomy",
-          currency,
-          reliability: "estimated",
-        },
-        {
-          name: "Cena libre",
-          description: "Pausa flexible para cenar.",
-          type: "dinner",
-          start_time: "19:00",
-          end_time: "20:00",
-          estimated_duration_minutes: 60,
-          price_status: "unknown",
-          budget_category: "gastronomy",
-          currency,
-          reliability: "estimated",
-        },
-      ],
-    })),
+    budget: { total: "number", currency, status: "estimated | provided" },
+    days: [{
+      day: 1,
+      title: "string",
+      activities: [{
+        name: "string",
+        description: "string",
+        type: "activity | travel | breakfast | lunch | dinner | rest | free_time",
+        start_time: "HH:MM",
+        end_time: "HH:MM",
+        estimated_duration_minutes: "integer",
+        location: "string (optional)",
+        estimated_cost_per_person: "number (optional)",
+        price_status: "estimate | unknown",
+        budget_category: "activity | gastronomy",
+        interest_tags: ["selected interest (activity only)"],
+        currency,
+        reliability: "estimated | unknown",
+      }],
+    }],
   };
+
   return [
-    `Solicitud del viajero: ${message}`,
-    `Contexto disponible: ${JSON.stringify(context ?? {})}`,
-    "Devuelve exclusivamente un objeto JSON válido que cumpla este esquema, sin Markdown ni texto antes/después:",
+    `Solicitud: ${message}`,
+    `Contexto: ${JSON.stringify(context ?? {})}`,
+    "Devuelve un único objeto JSON que cumpla este contrato. Sin Markdown ni texto adicional:",
     JSON.stringify(itinerarySchema),
-    "Para cada jornada, activities contiene bloques horarios. Cada bloque admite name, description, type (activity, travel, breakfast, lunch, dinner, rest, free_time), start_time, end_time, estimated_duration_minutes, location, travel_minutes, estimated_cost_per_person, price_status (estimate o unknown), budget_category (activity o gastronomy), interest_tags, currency y reliability (estimated o unknown).",
-    "Organiza una propuesta cronológica en las horas que mejor encajen con el destino; los horarios de comidas son sugerencias, no restricciones; puedes adaptar sus nombres/tiempos a costumbres locales solo si hay base fiable. Incluye descansos o tiempo libre cuando sea apropiado, sin llenar huecos artificialmente. No asignes establecimientos concretos sin datos fiables.",
-    "No hay acceso garantizado a rutas, tiempos de trayecto, aperturas ni precios en tiempo real. No inventes distancias, coordenadas, horarios de apertura ni fuentes. Solo incluye desplazamientos cuando exista una base explícita y marca su fiabilidad; los horarios propuestos y datos no verificados son estimaciones. Agrupa por proximidad solo cuando existan datos confiables; si no, organiza una secuencia lógica y señala la limitación.",
-    "Escribe en español natural, sin mezclar idiomas salvo nombres oficiales propios. Conserva los nombres oficiales de lugares. Propón actividades coherentes con el destino, distintas entre sí y de duración razonable. Prioriza los intereses recibidos; cada actividad turística debe incluir interest_tags con intereses exactos de la lista si se proporcionó. No marques precios como verificados ni gratis verificados.",
-    `El presupuesto indicado es exclusivamente para visitas y actividades turísticas; excluye vuelos, transporte entre ciudades, transporte urbano, alojamiento, compras personales y comidas. Las comidas usan type breakfast/lunch/dinner y budget_category=gastronomy, sin coste de entradas. Desplazamientos usan type=travel y no se suman al presupuesto. Visitas usan type=activity y budget_category=activity. Incluye exactamente ${requestedDays} jornadas, numeradas consecutivamente desde 1, y un máximo estructural de 12 bloques por jornada. Los bloques deben durar entre 1 y 720 minutos, usar horarios válidos del mismo día y no cruzar medianoche y no solaparse. Devuelve los bloques en orden cronológico. Genera JSON compacto y no añadas claves ajenas al esquema. El precio por persona es opcional: si no puedes estimarlo usa price_status=unknown y omite el coste; si estimas, usa price_status=estimate. No confundas desconocido con gratis. Usa la moneda indicada en contexto o EUR. Si hay fechas, conserva el intervalo y la duración exactos; si no, deduce la duración de la solicitud, y si no puede deducirse usa 1.`,
-    ...(context?.segmentedRequest ? ["Este es un tramo de un viaje más largo: genera exclusivamente las jornadas indicadas por las fechas y la duración de este contexto. No añadas jornadas del resto del viaje."] : []),
+    `Genera exactamente ${requestedDays} días consecutivos, numerados desde 1; cada día lleva título y 4 a 7 bloques breves. Cada bloque requiere nombre y duración entera de 1 a 720 minutos. Limita cada descripción a una frase de hasta 20 palabras. Si das horas, incluye ambas en formato HH:MM, en orden, sin solapamientos ni cruce de medianoche. Evita repetir actividades.`,
+    "Mantén origen, destino, fechas, presupuesto, moneda, viajeros, ritmo, tipo de viaje, notas e intereses del contexto. Respeta las fechas y la duración exactas. No conviertas importes a otra moneda.",
+    "Solo las visitas type=activity con budget_category=activity suman al presupuesto. Excluye vuelos, transportes, alojamiento y compras. Comidas usan breakfast/lunch/dinner y budget_category=gastronomy; desplazamientos usan travel y no suman. Omite budget_category en cualquier otro bloque.",
+    "Usa español natural y nombres oficiales. No inventes aperturas, rutas, distancias, coordenadas, fuentes ni precios exactos. Para importe desconocido usa price_status=unknown y omite el importe; para estimación usa estimate y la moneda indicada. No declares precios verificados ni gratuidad verificada.",
+    "Asigna interest_tags únicamente con valores exactos de los intereses del contexto y solo a visitas. Si no hay intereses o la lista está vacía, omite interest_tags o usa []. No inventes etiquetas. Si price_status=unknown, omite estimated_cost y estimated_cost_per_person (nunca uses 0 ni null). Si incluyes un precio, debe ser positivo, estar marcado estimate y usar la moneda indicada; omítelo si no puedes dar una estimación útil. No incluyas travel_minutes ni campos fuera del contrato.",
+    ...(context?.segmentedRequest ? ["Este es solo el tramo indicado: no incluyas jornadas de otras fechas ni del resto del viaje."] : []),
   ].join("\n\n");
 }
-
 function scanJsonObjects(source: string): {
   values: unknown[];
   invalidCount: number;
@@ -530,11 +551,13 @@ function validateAndNormalizeItinerary(
       if (budgetCategoryValue !== undefined && budgetCategoryValue !== "activity" && budgetCategoryValue !== "gastronomy") {
         errors.push(`days[${index}].activities[${activityIndex}].budget_category`);
       }
+      const isTouristActivity = blockTypeValue === undefined || blockTypeValue === "activity";
       if (interestTagsValue !== undefined && (
-        !Array.isArray(interestTagsValue) || interestTagsValue.length < 1 ||
+        !Array.isArray(interestTagsValue) ||
         interestTagsValue.some((tag) => typeof tag !== "string" || !context?.interests?.includes(tag))
       )) errors.push(`days[${index}].activities[${activityIndex}].interest_tags`);
-      if (context?.interests?.length && (!Array.isArray(interestTagsValue) || interestTagsValue.length === 0)) {
+      if (context?.interests?.length && isTouristActivity
+        && (!Array.isArray(interestTagsValue) || interestTagsValue.length === 0)) {
         errors.push(`days[${index}].activities[${activityIndex}].interest_tags_missing`);
       }
       if (priceSourceValue !== undefined || priceCheckedAtValue !== undefined) {
@@ -686,38 +709,141 @@ function normalizeForComparison(plan: ItineraryPlan): string {
   return JSON.stringify(plan);
 }
 
+function retryDelayMs(response: Response): number {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(1000, Math.round(seconds * 1000));
+    const date = Date.parse(retryAfter);
+    if (Number.isFinite(date)) return Math.min(1000, Math.max(0, date - Date.now()));
+  }
+  return 250;
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new AssistantProviderError("La solicitud se canceló.", 499));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new AssistantProviderError("La solicitud se canceló.", 499));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 async function requestCompletion(
   messages: OpenRouterMessage[],
   apiKey: string,
   model: string,
+  trace: GenerationTrace,
+  purpose: CompletionPurpose,
+  signal?: AbortSignal,
   allowEmpty = false,
 ): Promise<CompletionResult> {
+  const startedAt = Date.now();
+  trace.model = model;
+  if (purpose === "repair") trace.repairCalls += 1;
+  if (purpose === "continuation") trace.continuationCalls += 1;
+  trace.promptCharacters += messages.reduce((total, message) => total + message.content.length, 0);
   let response: Response;
-  try {
-    response = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": getPublicEnvironment().siteUrl ?? "http://localhost:3000",
-        "X-OpenRouter-Title": "Viajes",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        reasoning: { effort: "low", exclude: true },
-        temperature: 1,
-        messages,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    throw new AssistantProviderError("No se pudo conectar con OpenRouter. Comprueba la conexión e inténtalo de nuevo.", 503);
+  let timeoutSignal: AbortSignal | undefined;
+
+  while (true) {
+    trace.modelCalls += 1;
+    const callNumber = trace.modelCalls;
+    const callStartedAt = Date.now();
+    try {
+      timeoutSignal = AbortSignal.timeout(OPENROUTER_RESPONSE_TIMEOUT_MS);
+      const requestSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+      response = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": getPublicEnvironment().siteUrl ?? "http://localhost:3000",
+          "X-OpenRouter-Title": "Viajes",
+        },
+        body: JSON.stringify({
+          model,
+          // Nemotron free does not enforce response_format; validate the JSON contract locally.
+          max_completion_tokens: MAX_OUTPUT_TOKENS,
+          reasoning: { effort: "low", exclude: true },
+          temperature: 1,
+          messages,
+        }),
+        signal: requestSignal,
+      });
+    } catch (error: unknown) {
+      const durationMs = Date.now() - callStartedAt;
+      trace.providerWaitMs += durationMs;
+      console.warn("OpenRouter completion failed", {
+        requestId: trace.requestId,
+        callNumber,
+        purpose,
+        stage: "network_request",
+        model: safeProviderModel(model) ?? null,
+        durationMs,
+        reason: signal?.aborted ? "client_cancelled"
+          : timeoutSignal?.aborted || (error instanceof Error && error.name === "TimeoutError") ? "timeout" : "network_error",
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      if (signal?.aborted) throw new AssistantProviderError("La solicitud se canceló.", 499);
+      if (timeoutSignal?.aborted || (error instanceof Error && error.name === "TimeoutError")) {
+        throw new AssistantProviderError("OpenRouter tardó demasiado en responder. Vuelve a intentarlo.", 504);
+      }
+      throw new AssistantProviderError("No se pudo conectar con OpenRouter. Comprueba la conexión e inténtalo de nuevo.", 503);
+    }
+
+    trace.providerWaitMs += Date.now() - callStartedAt;
+    const retryable = response.status === 429 || response.status >= 500;
+    if (retryable && trace.transientRetries < 1 && !signal?.aborted) {
+      trace.transientRetries += 1;
+      const delayMs = retryDelayMs(response);
+      await response.body?.cancel().catch(() => undefined);
+      console.warn("OpenRouter transient response; retrying once", {
+        requestId: trace.requestId,
+        callNumber,
+        purpose,
+        stage: "provider_retry",
+        httpStatus: response.status,
+        delayMs,
+      });
+      await waitForRetry(delayMs, signal);
+      continue;
+    }
+    break;
   }
 
-  const data = await readJsonResponse(response);
+  const bodyRead = await readJsonResponse(response);
+  trace.providerBodyMs += bodyRead.readDurationMs;
+  trace.providerResponseParseMs += bodyRead.parseDurationMs;
+  const data = bodyRead.data;
   if (!data) {
+    console.warn("OpenRouter completion failed", {
+      requestId: trace.requestId,
+      callNumber: trace.modelCalls,
+      purpose,
+      stage: "provider_response_parse",
+      model: safeProviderModel(model) ?? null,
+      httpStatus: response.status,
+      contentType: response.headers.get("content-type")?.slice(0, 100) ?? null,
+      responseBodyState: bodyRead.state,
+      responseBodyCharacters: bodyRead.bodyCharacters,
+      responseBodyMs: bodyRead.readDurationMs,
+      responseParseMs: bodyRead.parseDurationMs,
+    });
     if (!response.ok) throw mapOpenRouterError(response.status);
+    if (bodyRead.state === "read_error") {
+      if (signal?.aborted) throw new AssistantProviderError("La solicitud se canceló.", 499);
+      if (timeoutSignal?.aborted) {
+        throw new AssistantProviderError("OpenRouter tardó demasiado en completar la respuesta. Vuelve a intentarlo.", 504);
+      }
+      throw new AssistantProviderError("La conexión con OpenRouter se interrumpió mientras llegaba la respuesta.", 502);
+    }
     throw new AssistantProviderError("OpenRouter devolvió una respuesta no válida.", 502);
   }
   const choice = data.choices?.[0];
@@ -726,9 +852,46 @@ async function requestCompletion(
     const providerStatus = !response.ok
       ? response.status
       : statusFromProviderCode(getErrorCode(data.error)) ?? 502;
-    const providerMessage = safeProviderMessage(getErrorMessage(data.error), apiKey);
-    throw mapOpenRouterError(providerStatus, providerMessage);
+    const providerCode = getErrorCode(data.error);
+    console.warn("OpenRouter completion rejected", {
+      requestId: trace.requestId,
+      callNumber: trace.modelCalls,
+      purpose,
+      stage: "provider_error",
+      model: safeProviderModel(model) ?? null,
+      responseModel: safeProviderModel(data.model) ?? null,
+      httpStatus: response.status,
+      providerStatus,
+      providerCode: typeof providerCode === "number" || (typeof providerCode === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(providerCode))
+        ? providerCode
+        : null,
+    });
+    throw mapOpenRouterError(providerStatus);
   }
+
+  const durationMs = Date.now() - startedAt;
+  if (Number.isFinite(data.usage?.prompt_tokens)) trace.promptTokens += data.usage?.prompt_tokens ?? 0;
+  if (Number.isFinite(data.usage?.completion_tokens)) trace.completionTokens += data.usage?.completion_tokens ?? 0;
+  if (purpose === "repair") trace.repairWaitMs += durationMs;
+  if (purpose === "continuation") trace.continuationWaitMs += durationMs;
+  console.info("OpenRouter completion received", {
+    requestId: trace.requestId,
+    callNumber: trace.modelCalls,
+    purpose,
+    stage: "provider_completion",
+    model: safeProviderModel(model) ?? null,
+    responseModel: safeProviderModel(data.model) ?? null,
+    httpStatus: response.status,
+    durationMs,
+    responseBodyMs: bodyRead.readDurationMs,
+    responseParseMs: bodyRead.parseDurationMs,
+    finishReason: choice?.finish_reason ?? null,
+    responseLength: text.length,
+    responseEmpty: text.length === 0,
+    promptTokens: Number.isFinite(data.usage?.prompt_tokens) ? data.usage?.prompt_tokens : null,
+    completionTokens: Number.isFinite(data.usage?.completion_tokens) ? data.usage?.completion_tokens : null,
+    totalTokens: Number.isFinite(data.usage?.total_tokens) ? data.usage?.total_tokens : null,
+  });
 
   if (!text && choice?.finish_reason !== "length" && !allowEmpty) {
     throw new AssistantProviderError("OpenRouter no devolvió contenido para esta solicitud.", 502);
@@ -738,10 +901,10 @@ async function requestCompletion(
     finishReason: choice?.finish_reason ?? null,
     model: typeof data.model === "string" ? data.model : model,
     httpStatus: response.status,
+    durationMs,
     usage: data.usage,
   };
 }
-
 function describeValidationFailure(parse: JsonParseResult, validation: NormalizedItineraryResult): string[] {
   return parse.errors.length > 0 ? parse.errors : validation.errors;
 }
@@ -778,7 +941,60 @@ function makeContinuationMessage(): string {
   return "Continúa únicamente el objeto JSON truncado desde el último carácter, sin repetir el prefijo ni crear un segundo objeto. Completa y cierra el JSON.";
 }
 
-export async function generateTravelAssistantReply(message: string, context?: AssistantContext): Promise<AssistantReply> {
+export async function generateTravelAssistantReply(
+  message: string,
+  context?: AssistantContext,
+  options: AssistantGenerationOptions = {},
+): Promise<AssistantReply> {
+  const trace = createGenerationTrace(options.requestId);
+  console.info("Assistant generation started", { requestId: trace.requestId, stage: "generation_start" });
+  try {
+    const reply = await generateTravelAssistantReplyInternal(message, context, trace, options.signal);
+    console.info("Assistant generation completed", {
+      requestId: trace.requestId,
+      stage: "generation_complete",
+      model: safeProviderModel(reply.model ?? trace.model) ?? null,
+      durationMs: Date.now() - trace.startedAt,
+      providerWaitMs: trace.providerWaitMs,
+      providerBodyMs: trace.providerBodyMs,
+      providerResponseParseMs: trace.providerResponseParseMs,
+      itineraryParseMs: trace.itineraryParseMs,
+      validationMs: trace.validationMs,
+      repairWaitMs: trace.repairWaitMs,
+      continuationWaitMs: trace.continuationWaitMs,
+      modelCalls: trace.modelCalls,
+      repairCalls: trace.repairCalls,
+      continuationCalls: trace.continuationCalls,
+      transientRetries: trace.transientRetries,
+      promptCharacters: trace.promptCharacters,
+      promptTokens: trace.promptTokens || null,
+      completionTokens: trace.completionTokens || null,
+      outcome: reply.itinerary ? "valid_itinerary" : reply.source,
+    });
+    return reply;
+  } catch (error: unknown) {
+    console.warn("Assistant generation failed", {
+      requestId: trace.requestId,
+      stage: "generation_failure",
+      model: safeProviderModel(trace.model) ?? null,
+      durationMs: Date.now() - trace.startedAt,
+      providerWaitMs: trace.providerWaitMs,
+      providerBodyMs: trace.providerBodyMs,
+      providerResponseParseMs: trace.providerResponseParseMs,
+      modelCalls: trace.modelCalls,
+      transientRetries: trace.transientRetries,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    throw error;
+  }
+}
+
+async function generateTravelAssistantReplyInternal(
+  message: string,
+  context: AssistantContext | undefined,
+  trace: GenerationTrace,
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
   const mode = getPublicEnvironment().appMode;
   if (mode === "demo") return demoReply(message, context);
   if (mode !== "production") throw new AssistantProviderError("NEXT_PUBLIC_APP_MODE debe ser demo o production.", 500);
@@ -800,7 +1016,7 @@ export async function generateTravelAssistantReply(message: string, context?: As
     const completion = await requestCompletion([
       { role: "system", content: "Eres un asistente de viajes. Devuelve únicamente JSON válido con alternativas concisas." },
       { role: "user", content: prompt },
-    ], apiKey, model);
+    ], apiKey, model, trace, "initial", signal);
     const json = completion.text.match(/\{[\s\S]*\}/)?.[0];
     let alternatives: ActivityAlternative[] = [];
     if (json) {
@@ -862,17 +1078,21 @@ export async function generateTravelAssistantReply(message: string, context?: As
       const previousActivityNames = partialPlans.flatMap((plan) =>
         plan.days.flatMap((day) => day.items.map((item) => item.name)),
       );
-      const segmentReply = await generateTravelAssistantReply(
+      const segmentReply = await generateTravelAssistantReplyInternal(
         `${message}\nGenera únicamente el tramo de los días ${startDay} a ${endDay} del itinerario.${
           previousActivityNames.length
             ? ` No repitas estas actividades ya asignadas a días anteriores: ${previousActivityNames.join("; ")}.`
             : ""
         }`,
         segmentContext,
+        trace,
+        signal,
       );
       lastModel = segmentReply.model ?? lastModel;
       if (!segmentReply.itinerary) {
         console.warn("OpenRouter itinerary segment incomplete " + JSON.stringify({
+          stage: "itinerary_segment_missing",
+          model: safeProviderModel(segmentReply.model) ?? safeProviderModel(model) ?? null,
           segmentStartDay: startDay,
           segmentEndDay: endDay,
           totalDays: requestedDays,
@@ -909,10 +1129,14 @@ export async function generateTravelAssistantReply(message: string, context?: As
         })),
       })),
     };
+    const combinedValidationStartedAt = Date.now();
     const combinedValidation = validateAndNormalizeItinerary(combined, context);
+    trace.validationMs += Date.now() - combinedValidationStartedAt;
     const plan = combinedValidation.value;
     if (!plan || plan.days.length !== requestedDays) {
       console.warn("OpenRouter segmented itinerary validation failed " + JSON.stringify({
+        stage: "itinerary_segment_validation",
+        model: safeProviderModel(lastModel) ?? null,
         expectedDays: requestedDays,
         receivedDays: combined.days.length,
         validationErrors: combinedValidation.errors,
@@ -940,7 +1164,7 @@ export async function generateTravelAssistantReply(message: string, context?: As
   ];
   let messages = [...baseMessages];
 
-  let completion = await requestCompletion(messages, apiKey, model);
+  let completion = await requestCompletion(messages, apiKey, model, trace, "initial", signal);
   if (!structuredItineraryRequested) {
     let combinedText = completion.text;
     let continuations = 0;
@@ -950,7 +1174,7 @@ export async function generateTravelAssistantReply(message: string, context?: As
         { role: "assistant", content: combinedText },
         { role: "user", content: "Continúa la respuesta desde donde se cortó, sin repetir texto anterior." },
       );
-      completion = await requestCompletion(messages, apiKey, model);
+      completion = await requestCompletion(messages, apiKey, model, trace, "continuation", signal);
       combinedText = mergeContinuation(combinedText, completion.text);
       continuations += 1;
     }
@@ -975,16 +1199,32 @@ export async function generateTravelAssistantReply(message: string, context?: As
   const repairLimit = context?.segmentedRequest ? 1 : MAX_JSON_REPAIRS;
 
   while (responseText.length <= MAX_COMPLETION_LENGTH) {
+    const parseStartedAt = Date.now();
     const parsed = parseItineraryJson(responseText);
+    const parseDurationMs = Date.now() - parseStartedAt;
+    trace.itineraryParseMs += parseDurationMs;
+    const validationStartedAt = Date.now();
     const validation = rejectNextParsedResponse
       ? { errors: ["json.multiple_distinct_itineraries"] }
       : parsed.value === undefined
       ? { errors: parsed.errors }
       : validateAndNormalizeItinerary(parsed.value, context);
+    const validationDurationMs = Date.now() - validationStartedAt;
+    trace.validationMs += validationDurationMs;
     rejectNextParsedResponse = false;
     const plan = validation.value;
     lastParseErrors = parsed.errors;
     lastJsonExtracted = parsed.value !== undefined;
+    const candidateErrors = validation.value ? [] : describeValidationFailure(parsed, validation);
+    console.info("Assistant itinerary candidate processed", {
+      requestId: trace.requestId,
+      stage: "itinerary_parse_validation",
+      parseDurationMs,
+      validationDurationMs,
+      jsonExtracted: parsed.value !== undefined,
+      outcome: validation.value ? "valid" : "invalid",
+      errorCodes: candidateErrors,
+    });
 
     if (plan && completion.finishReason !== "length") {
       return {
@@ -1001,13 +1241,17 @@ export async function generateTravelAssistantReply(message: string, context?: As
         { role: "assistant", content: responseText },
         { role: "user", content: makeContinuationMessage() },
       );
-      const nextCompletion = await requestCompletion(messages, apiKey, model, true);
+      const nextCompletion = await requestCompletion(messages, apiKey, model, trace, "continuation", signal, true);
 
       if (nextCompletion.text) {
+        const nextParseStartedAt = Date.now();
         const nextParsed = parseItineraryJson(nextCompletion.text);
+        trace.itineraryParseMs += Date.now() - nextParseStartedAt;
+        const nextValidationStartedAt = Date.now();
         const nextValidation = nextParsed.value === undefined
           ? { errors: nextParsed.errors }
           : validateAndNormalizeItinerary(nextParsed.value, context);
+        trace.validationMs += Date.now() - nextValidationStartedAt;
 
         if (nextValidation.value) {
           if (plan && normalizeForComparison(plan) !== normalizeForComparison(nextValidation.value)) {
@@ -1038,7 +1282,7 @@ export async function generateTravelAssistantReply(message: string, context?: As
         ...baseMessages,
         { role: "user", content: makeRepairMessage(lastValidationErrors) },
       ];
-      completion = await requestCompletion(messages, apiKey, model, true);
+      completion = await requestCompletion(messages, apiKey, model, trace, "repair", signal, true);
       responseText = completion.text;
       repairCount += 1;
       rejectNextParsedResponse = false;
@@ -1048,7 +1292,10 @@ export async function generateTravelAssistantReply(message: string, context?: As
   }
 
   console.warn("OpenRouter itinerary validation failed " + JSON.stringify({
+    stage: "itinerary_validation",
+    model: safeProviderModel(completion.model) ?? safeProviderModel(model) ?? null,
     httpStatus: completion.httpStatus,
+    durationMs: completion.durationMs,
     responseModel: safeProviderModel(completion.model) ?? null,
     finishReason: completion.finishReason === "length" ? "length" : "other",
     promptTokens: Number.isFinite(completion.usage?.prompt_tokens) ? completion.usage?.prompt_tokens : null,

@@ -37,6 +37,11 @@ describe("preferencias de perfil", () => {
     })).toMatchObject({ interests: ["Historia"], pace: "equilibrado" });
   });
 
+  it("acepta y conserva COP como moneda preferida", () => {
+    expect(validateProfilePreferences({ ...preferences, currency: "COP" }))
+      .toMatchObject({ currency: "COP" });
+  });
+
   it("guarda y recupera preferencias en el almacenamiento local demo", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "demo");
     await saveProfilePreferences(preferences);

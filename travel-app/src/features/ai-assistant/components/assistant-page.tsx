@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Currency } from "@/lib/types";
@@ -12,12 +12,14 @@ import { getBlockTypeLabel } from "@/lib/itinerary-schedule";
 import { normalizeNewDateRange } from "@/lib/trip-dates";
 import { useLocalToday } from "@/lib/hooks/use-local-today";
 import { PageHeading } from "@/components/ui";
+import { CURRENCY_OPTIONS } from "@/lib/currency-catalog";
+import { formatMoney } from "@/lib/money";
 
 const defaultPrompt = "Organiza un viaje barato a Marrakech de cuatro días.";
 
 function formatEstimate(amount: number, currency: Currency): string {
   try {
-    return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(amount);
+    return formatMoney(amount, currency);
   } catch {
     return `${amount} ${currency}`;
   }
@@ -31,8 +33,12 @@ export default function IaPage() {
   );
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState("demo");
+  const [model, setModel] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [itinerary, setItinerary] = useState<ItineraryPlan | null>(null);
+  const [generationRequestId, setGenerationRequestId] = useState<string | null>(null);
+  const generationInProgress = useRef(false);
+  const generationController = useRef<AbortController | null>(null);
   const [tripDetails, setTripDetails] = useState({
     startDate: "",
     endDate: "",
@@ -40,6 +46,12 @@ export default function IaPage() {
     budget: "",
     currency: "EUR" as Currency,
   });
+
+  useEffect(() => () => {
+    generationInProgress.current = false;
+    generationController.current?.abort();
+    generationController.current = null;
+  }, []);
   const updateTripDate = (key: "startDate" | "endDate", value: string) => {
     setTripDetails((current) => ({
       ...current,
@@ -53,9 +65,15 @@ export default function IaPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (generationInProgress.current) return;
+    generationInProgress.current = true;
+    const controller = new AbortController();
+    generationController.current = controller;
     setLoading(true);
     setWarning(null);
     setItinerary(null);
+    setModel(null);
+    setGenerationRequestId(null);
 
     try {
       const normalizedDates = normalizeNewDateRange(tripDetails.startDate, tripDetails.endDate, today);
@@ -88,12 +106,14 @@ export default function IaPage() {
       };
       const response = await fetch("/api/assistant", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           "X-User-Time-Zone": Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         },
         body: JSON.stringify({ message: prompt, context }),
       });
+      const requestId = response.headers.get("X-Request-Id");
 
       if (!response.ok) {
         const data = await response.json();
@@ -103,14 +123,22 @@ export default function IaPage() {
       const data = await response.json();
       setAnswer(data.text ?? "No hay respuesta disponible.");
       setSource(data.source ?? "demo");
+      setModel(typeof data.model === "string" ? data.model : null);
       setWarning(typeof data.warning === "string" ? data.warning : null);
       setItinerary(data.itinerary ?? null);
+      setGenerationRequestId(requestId);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setAnswer(error instanceof Error ? error.message : "No se pudo contactar con el asistente.");
       setSource("error");
+      setModel(null);
       setWarning(null);
     } finally {
-      setLoading(false);
+      if (generationController.current === controller) {
+        generationController.current = null;
+        generationInProgress.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -121,7 +149,7 @@ export default function IaPage() {
 
       <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
         <p className="mb-5 max-w-5xl text-base leading-relaxed text-slate-600">
-          El asistente usa MiniMax a través de OpenRouter cuando está activado el modo production. En modo demo responde sin llamar a servicios externos.
+          El asistente usa el modelo configurado a través de OpenRouter cuando está activado el modo producción. En modo demo responde sin llamar a servicios externos.
         </p>
 
         <form onSubmit={handleSubmit} className="grid min-w-0 gap-4 md:grid-cols-2">
@@ -153,7 +181,7 @@ export default function IaPage() {
               </label>
               <label className="text-xs text-slate-600">Moneda
                 <select value={tripDetails.currency} onChange={(event) => setTripDetails({ ...tripDetails, currency: event.target.value as Currency })} className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-                  {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => <option key={currency}>{currency}</option>)}
+                  {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
                 </select>
               </label>
             </div>
@@ -165,6 +193,11 @@ export default function IaPage() {
           >
             {loading ? "Consultando..." : warning && !itinerary ? "Reintentar itinerario" : "Enviar"}
           </button>
+          {loading && (
+            <p role="status" className="text-sm text-slate-600 md:col-span-2">
+              Esperando la respuesta del modelo y su validación. No se mostrará ni guardará un itinerario hasta que sea válido.
+            </p>
+          )}
         </form>
 
         <div className="mt-6 space-y-4" aria-live="polite">
@@ -175,7 +208,7 @@ export default function IaPage() {
             <div className="mb-2 flex items-center justify-between gap-3">
               <span className="font-semibold">Asistente</span>
               <span className="rounded-full bg-white/80 px-2 py-1 text-xs font-medium uppercase tracking-[0.08em] text-emerald-800">
-                {source === "openrouter" ? "OpenRouter · MiniMax" : source === "error" ? "Error" : "Demo"}
+                {source === "openrouter" ? `OpenRouter · ${model ?? "modelo configurado"}` : source === "error" ? "Error" : "Demo"}
               </span>
             </div>
             {!itinerary && (
@@ -273,6 +306,7 @@ export default function IaPage() {
                 </p>
                 <SaveTripButton
                   key={`${itinerary.destination}-${itinerary.days.length}-${itinerary.days[0]?.theme}`}
+                  generationRequestId={generationRequestId}
                   draft={{
                     name: `Viaje a ${itinerary.destination}`,
                     destination: itinerary.destination,

@@ -1,8 +1,8 @@
 import type { TripDraft } from "@/lib/persistence/types";
 import type { Currency, ItineraryItem, TripStatus, TravelType } from "@/lib/types";
+import { isCurrency } from "@/lib/currency-catalog";
 import { durationBetween } from "@/lib/itinerary-schedule";
 
-const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
 const travelTypes: TravelType[] = [
   "Económico", "Cultural", "Gastronómico", "Naturaleza", "Relax", "Aventura", "Familiar", "Combinado",
 ];
@@ -45,7 +45,7 @@ function validActivity(value: unknown, travelers: number, tripInterests: string[
     && (value.budgetCategory === undefined || value.budgetCategory === "activity" || value.budgetCategory === "gastronomy")
     && (interestTags === undefined || (Array.isArray(interestTags) && interestTags.length <= 200 && interestTags.every((tag) => typeof tag === "string" && tag.length <= 80 && tripInterests.includes(tag))))
     && (pricePerPerson === undefined || estimate === Number((pricePerPerson * travelers).toFixed(2)))
-    && typeof value.currency === "string" && currencies.includes(value.currency as Currency)
+    && isCurrency(value.currency)
     && typeof value.order === "number" && Number.isInteger(value.order) && value.order > 0
     && typeof value.notes === "string" && value.notes.length <= 2000
     && ["verificado", "orientativo", "desconocido"].includes(String(value.source))
@@ -78,7 +78,7 @@ export function validateTripDraft(value: unknown): TripDraft | undefined {
     || (typeof startDate === "string" && typeof endDate === "string" && endDate < startDate)
     || (travelers !== undefined && (typeof travelers !== "number" || !Number.isInteger(travelers) || travelers < 1 || travelers > 100))
     || typeof budget !== "number" || !Number.isFinite(budget) || budget < 0
-    || typeof currency !== "string" || !currencies.includes(currency as Currency)
+    || !isCurrency(currency)
     || (interests !== undefined && (!Array.isArray(interests) || interests.length > 200 || interests.some((item) => typeof item !== "string" || item.length > 80)))
     || (travelType !== undefined && (typeof travelType !== "string" || !travelTypes.includes(travelType as TravelType)))
     || (status !== undefined && (typeof status !== "string" || !tripStatuses.includes(status as TripStatus)))
@@ -143,7 +143,7 @@ export function validateExpense(value: unknown): {
     typeof value.category !== "string" || !value.category.trim() || value.category.length > 80
     || typeof value.description !== "string" || !value.description.trim() || value.description.length > 240
     || typeof value.amount !== "number" || !Number.isFinite(value.amount) || value.amount < 0
-    || typeof value.currency !== "string" || !currencies.includes(value.currency as Currency)
+    || !isCurrency(value.currency)
     || !isDate(value.incurredOn)
     || (value.notes !== undefined && (typeof value.notes !== "string" || value.notes.length > 1000))
     || (value.activityId !== undefined && (typeof value.activityId !== "string" || value.activityId.length > 100))

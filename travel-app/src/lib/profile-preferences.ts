@@ -1,6 +1,6 @@
 import type { Currency, ProfilePreferences, TravelType } from "@/lib/types";
+import { isCurrency } from "@/lib/currency-catalog";
 
-const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
 const travelTypes: TravelType[] = [
   "Económico", "Cultural", "Gastronómico", "Naturaleza", "Relax", "Aventura", "Familiar", "Combinado",
 ];
@@ -15,7 +15,7 @@ export function validateProfilePreferences(value: unknown): ProfilePreferences |
   if (
     typeof name !== "string" || name.length > 160
     || typeof language !== "string" || !/^[a-z]{2}(-[A-Z]{2})?$/.test(language)
-    || typeof currency !== "string" || !currencies.includes(currency as Currency)
+    || !isCurrency(currency)
     || !Array.isArray(interests) || interests.length > 200
     || interests.some((interest) => typeof interest !== "string" || !interest.trim() || interest.length > 80)
     || typeof pace !== "string" || !["lento", "equilibrado", "rápido"].includes(pace)

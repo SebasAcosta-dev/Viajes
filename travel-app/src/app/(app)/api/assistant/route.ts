@@ -4,8 +4,10 @@ import type { Currency } from "@/lib/types";
 import { requestTodayIso } from "@/lib/trip-dates";
 import { z } from "zod";
 import { parseJsonBody } from "@/lib/api/http";
+import { isCurrency } from "@/lib/currency-catalog";
 
-const currencies: Currency[] = ["EUR", "USD", "GBP", "MAD"];
+export const maxDuration = 180;
+
 const assistantRequestSchema = z.object({
   message: z.string().trim().min(1, "Debes indicar una solicitud de viaje.").max(2000, "La solicitud no puede superar los 2000 caracteres."),
   context: z.unknown().optional(),
@@ -38,7 +40,7 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
     (input.notes !== undefined && (typeof input.notes !== "string" || input.notes.length > 1000)) ||
     (input.startDate !== undefined && !isValidIsoDate(input.startDate)) ||
     (input.endDate !== undefined && !isValidIsoDate(input.endDate)) ||
-    (input.currency !== undefined && (typeof input.currency !== "string" || !currencies.includes(input.currency as Currency))) ||
+    (input.currency !== undefined && !isCurrency(input.currency)) ||
     (activity !== undefined && (
       typeof activity.name !== "string" || !activity.name.trim() || activity.name.length > 160 ||
       (activity.description !== undefined && (typeof activity.description !== "string" || activity.description.length > 1000)) ||
@@ -86,26 +88,59 @@ function parseContext(value: unknown, today: string): AssistantContext | null {
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
+  const requestId = globalThis.crypto?.randomUUID?.() ?? `assistant-${requestStartedAt}`;
+  console.info("Assistant API request started", { requestId, stage: "http_request_start" });
   const parsed = await parseJsonBody(request, assistantRequestSchema, "El cuerpo de la solicitud debe ser JSON válido.");
-  if (!parsed.ok) return parsed.response;
+  if (!parsed.ok) {
+    parsed.response.headers.set("X-Request-Id", requestId);
+    console.info("Assistant API request completed", {
+      requestId, stage: "http_request_complete", status: parsed.response.status, durationMs: Date.now() - requestStartedAt,
+    });
+    return parsed.response;
+  }
   const { message, context: rawContext } = parsed.data;
   const context = parseContext(rawContext, requestTodayIso(request));
   if (!context) {
-    return NextResponse.json({ error: "El contexto del viaje no tiene un formato válido." }, { status: 400 });
+    console.info("Assistant API request completed", {
+      requestId, stage: "http_request_complete", status: 400, durationMs: Date.now() - requestStartedAt,
+    });
+    return NextResponse.json({ error: "El contexto del viaje no tiene un formato válido." }, {
+      status: 400, headers: { "X-Request-Id": requestId },
+    });
   }
 
   try {
-    const response = await generateTravelAssistantReply(message, context);
-    return NextResponse.json(response);
+    const response = await generateTravelAssistantReply(message, context, { requestId, signal: request.signal });
+    console.info("Assistant API request completed", {
+      requestId,
+      stage: "http_request_complete",
+      status: 200,
+      durationMs: Date.now() - requestStartedAt,
+    });
+    return NextResponse.json(response, { headers: { "X-Request-Id": requestId } });
   } catch (error) {
+    const status = error instanceof AssistantProviderError ? error.status : 500;
+    console.warn("Assistant API request failed", {
+      requestId,
+      stage: "http_request_failure",
+      status,
+      durationMs: Date.now() - requestStartedAt,
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    if (request.signal.aborted) return new Response(null, { status: 499, headers: { "X-Request-Id": requestId } });
     if (error instanceof AssistantProviderError) {
-      console.warn("Assistant provider request failed", { status: error.status, errorType: error.name });
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      console.warn("Assistant provider request failed", { requestId, status: error.status, errorType: error.name });
+      return NextResponse.json({ error: error.message }, {
+        status: error.status, headers: { "X-Request-Id": requestId },
+      });
     }
 
     console.error("Assistant request failed", {
       errorType: error instanceof Error ? error.name : "unknown",
     });
-    return NextResponse.json({ error: "No se pudo procesar la solicitud del asistente." }, { status: 500 });
+    return NextResponse.json({ error: "No se pudo procesar la solicitud del asistente." }, {
+      status: 500, headers: { "X-Request-Id": requestId },
+    });
   }
 }

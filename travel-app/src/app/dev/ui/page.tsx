@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Field, Input, Select } from "@/components/ui";
+import { CURRENCY_OPTIONS } from "@/lib/currency-catalog";
 
 export default function UiPreviewPage() {
   if (process.env.NODE_ENV !== "development") notFound();
@@ -45,7 +46,7 @@ export default function UiPreviewPage() {
                 <Input id="ui-destination" placeholder="Lisboa, Portugal" />
               </Field>
               <Field id="ui-currency" label="Moneda">
-                <Select id="ui-currency" defaultValue="EUR"><option>EUR</option><option>USD</option><option>GBP</option><option>MAD</option></Select>
+                <Select id="ui-currency" defaultValue="EUR">{CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}</Select>
               </Field>
               <Field id="ui-error" label="Fecha de salida" error="Selecciona una fecha válida.">
                 <Input id="ui-error" type="date" aria-invalid="true" aria-describedby="ui-error-error" />

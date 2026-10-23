@@ -114,10 +114,14 @@ export async function listTripSummaries(): Promise<SavedTripSummary[]> {
   }));
 }
 
-export async function saveTrip(draft: TripDraft): Promise<SavedTrip> {
+export async function saveTrip(draft: TripDraft, options: { generationRequestId?: string } = {}): Promise<SavedTrip> {
   const normalizedTripDraft = normalizeNewTripDates(draft, localTodayIso());
   if (shouldUseSupabase()) {
-    const result = await api<{ trip?: unknown }>("/api/trips", { method: "POST", body: JSON.stringify(normalizedTripDraft) });
+    const result = await api<{ trip?: unknown }>("/api/trips", {
+      method: "POST",
+      body: JSON.stringify(normalizedTripDraft),
+      ...(options.generationRequestId ? { headers: { "X-Generation-Request-Id": options.generationRequestId } } : {}),
+    });
     if (!isRecord(result.trip) || typeof result.trip.id !== "string") {
       throw new Error("El servidor no confirmó el viaje guardado.");
     }

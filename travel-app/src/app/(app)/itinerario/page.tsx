@@ -16,9 +16,10 @@ import { ActivityAssistant } from "@/features/itinerary/components/activity-assi
 import { ItineraryDayHeader } from "@/features/itinerary/components/itinerary-day-header";
 import { ActivityCreateForm } from "@/features/itinerary/components/activity-create-form";
 import { ActivitySummary } from "@/features/itinerary/components/activity-summary";
+import { formatMoney } from "@/lib/money";
 
 function money(value: number, currency: ItineraryItem["currency"]): string {
-  return new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(value);
+  return formatMoney(value, currency);
 }
 
 function getScheduleConflicts(items: ItineraryItem[]): string[] {
@@ -202,6 +203,7 @@ export default function ItineraryPage() {
   }
 
   const { form, itinerary } = draft;
+  const modelLabel = draft.model ?? "modelo configurado";
   const knownPrices = itinerary.days.flatMap((day) => day.items).filter((activity) =>
     (activity.blockType === undefined || activity.blockType === "activity") &&
     activity.budgetCategory !== "gastronomy" && activity.estimate !== undefined && activity.priceStatus !== "unknown",
@@ -209,7 +211,7 @@ export default function ItineraryPage() {
 
   return (
     <main className="itinerary-page mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8 2xl:px-10">
-      <PageHeading eyebrow={`Tu plan · ${draft.source === "openrouter" ? "OpenRouter · MiniMax" : "Modo demo"}`} title={`Itinerario para ${itinerary.destination}`} description="Revisa cada jornada y ajusta los detalles antes de guardar el viaje."
+      <PageHeading eyebrow={`Tu plan · ${draft.source === "openrouter" ? `OpenRouter · ${modelLabel}` : "Modo demo"}`} title={`Itinerario para ${itinerary.destination}`} description="Revisa cada jornada y ajusta los detalles antes de guardar el viaje."
         actions={<Link href="/" className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700">Volver y editar el formulario</Link>} />
 
       <section className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 sm:p-6">

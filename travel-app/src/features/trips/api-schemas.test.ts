@@ -31,6 +31,10 @@ describe("contratos API de viajes", () => {
     expect(tripUpdateSchema.safeParse({}).success).toBe(false);
   });
 
+  it("acepta COP en la actualización del presupuesto de un viaje", () => {
+    expect(tripUpdateSchema.safeParse({ budget: 125000, currency: "COP" }).success).toBe(true);
+  });
+
   it("rechaza ids de actividad duplicados en un reordenamiento", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     expect(reorderActivitiesRequestSchema.safeParse({ activityIds: [id, id] }).success).toBe(false);

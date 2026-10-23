@@ -4,6 +4,7 @@ import { generateItineraryFromTrip } from "@/lib/itinerary";
 import { SaveTripButton } from "@/features/trips/components/save-trip-button";
 import { ManualTripPlanner } from "@/features/itinerary/components/manual-trip-planner";
 import { PageHeading } from "@/components/ui";
+import { formatMoney } from "@/lib/money";
 
 const exampleForm = {
   origin: "Madrid",
@@ -40,7 +41,7 @@ export default function PlanificarPage() {
             <div className="flex justify-between gap-4"><dt>Destino</dt><dd>{exampleForm.destination}</dd></div>
             <div className="flex justify-between gap-4"><dt>Fechas</dt><dd>{exampleForm.startDate} → {exampleForm.endDate}</dd></div>
             <div className="flex justify-between gap-4"><dt>Viajeros</dt><dd>{exampleForm.travelers}</dd></div>
-            <div className="flex justify-between gap-4"><dt>Presupuesto</dt><dd>{exampleForm.budget} {exampleForm.currency}</dd></div>
+            <div className="flex justify-between gap-4"><dt>Presupuesto</dt><dd>{formatMoney(exampleForm.budget, exampleForm.currency)}</dd></div>
           </dl>
         </section>
 
@@ -68,7 +69,7 @@ export default function PlanificarPage() {
                     <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-600">
                       <span>{item.startTime} - {item.endTime}</span>
                       <span>{item.durationMinutes} min</span>
-                      <span>{item.estimate} {item.currency}</span>
+                      <span>{item.estimate === undefined ? "Sin estimación" : formatMoney(item.estimate, item.currency)}</span>
                     </div>
                   </div>
                 ))}

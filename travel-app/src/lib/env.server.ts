@@ -11,6 +11,7 @@ const serverEnvironmentSchema = z.object({
   aiApiKey: optionalText,
   aiProvider: optionalText,
   aiModel: optionalText,
+  geoapifyApiKey: optionalText,
 });
 
 export type ServerEnvironment = z.infer<typeof serverEnvironmentSchema>;
@@ -20,6 +21,7 @@ export function parseServerEnvironment(source: Record<string, string | undefined
     aiApiKey: source.AI_API_KEY,
     aiProvider: source.AI_PROVIDER,
     aiModel: source.AI_MODEL,
+    geoapifyApiKey: source.GEOAPIFY_API_KEY,
   });
 }
 
@@ -28,5 +30,6 @@ export function getServerEnvironment(): ServerEnvironment {
     AI_API_KEY: process.env.AI_API_KEY,
     AI_PROVIDER: process.env.AI_PROVIDER,
     AI_MODEL: process.env.AI_MODEL,
+    GEOAPIFY_API_KEY: process.env.GEOAPIFY_API_KEY,
   });
 }

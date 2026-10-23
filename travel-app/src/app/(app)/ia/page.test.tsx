@@ -4,7 +4,9 @@ import { addIsoDays } from "@/lib/date-format";
 import { localTodayIso } from "@/lib/trip-dates";
 
 vi.mock("@/features/trips/components/save-trip-button", () => ({
-  SaveTripButton: () => <button type="button">Guardar viaje</button>,
+  SaveTripButton: ({ generationRequestId }: { generationRequestId?: string | null }) => (
+    <button type="button" data-testid="save-trip" data-generation-request-id={generationRequestId ?? undefined}>Guardar viaje</button>
+  ),
 }));
 
 import IaPage from "@/app/(app)/ia/page";
@@ -12,6 +14,8 @@ import IaPage from "@/app/(app)/ia/page";
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+
+
 });
 
 describe("asistente de viajes", () => {
@@ -20,6 +24,7 @@ describe("asistente de viajes", () => {
     const endDate = addIsoDays(startDate, 3) ?? startDate;
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       source: "openrouter",
+      model: "nvidia/nemotron-3-ultra-550b-a55b:free",
       text: "Itinerario listo.",
       itinerary: {
         destination: "Marrakech",
@@ -50,7 +55,7 @@ describe("asistente de viajes", () => {
           }],
         }],
       },
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }), { status: 200, headers: { "Content-Type": "application/json", "X-Request-Id": "generation-trace-1" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<IaPage />);
@@ -73,7 +78,29 @@ describe("asistente de viajes", () => {
       currency: "EUR",
     });
     expect(await screen.findByText(new RegExp(`${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${startDate}T12:00:00Z`))} – ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${endDate}T12:00:00Z`))}`))).toBeTruthy();
+    expect(screen.getByText("OpenRouter · nvidia/nemotron-3-ultra-550b-a55b:free")).toBeInTheDocument();
     expect(screen.getByText("10:00–11:00")).toBeTruthy();
+    expect(screen.getByTestId('save-trip')).toHaveAttribute('data-generation-request-id', 'generation-trace-1');
     expect(screen.getByText(/Las horas de las actividades son propuestas, no límites/) ).toBeInTheDocument();
   });
+  it("evita una segunda petición concurrente y cancela la solicitud al abandonar la pantalla", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal as AbortSignal | undefined;
+      return new Promise<Response>(() => undefined);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const page = render(<IaPage />);
+    const submit = screen.getByRole("button", { name: "Enviar" });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("status")).toHaveTextContent("Esperando la respuesta del modelo");
+    page.unmount();
+
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
 });

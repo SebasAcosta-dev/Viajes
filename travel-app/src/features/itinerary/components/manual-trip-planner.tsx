@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { InterestPicker } from "@/features/itinerary/components/interest-picker";
+import { LocationAutocomplete } from "@/features/trips/components/location-autocomplete";
 import { destinations, defaultProfile } from "@/lib/data/demo-data";
 import { addDailySchedules } from "@/lib/itinerary-schedule";
 import { generateItineraryFromTrip } from "@/lib/itinerary";
@@ -15,6 +16,8 @@ import { localTodayIso, normalizeNewDateRange, normalizeNewTripDates } from "@/l
 import { useLocalToday } from "@/lib/hooks/use-local-today";
 import type { Currency, ProfilePreferences, TripFormValues } from "@/lib/types";
 import type { TripDraft } from "@/lib/persistence/types";
+import { CURRENCY_OPTIONS, currencyFractionDigits } from "@/lib/currency-catalog";
+import { formatMoney } from "@/lib/money";
 
 const emptyForm: TripFormValues = {
   origin: "",
@@ -25,8 +28,6 @@ const emptyForm: TripFormValues = {
   budget: 0,
   currency: defaultProfile.currency,
   interests: [],
-  travelType: "Combinado",
-  pace: defaultProfile.pace,
   notes: "",
 };
 
@@ -51,9 +52,7 @@ export function ManualTripPlanner() {
         setForm((current) => ({
           ...current,
           currency: saved.currency,
-          pace: saved.pace,
           interests: saved.interests.filter((interest) => (allTravelInterests as readonly string[]).includes(interest)),
-          ...(saved.travelTypes[0] ? { travelType: saved.travelTypes[0] } : {}),
         }));
       })
       .catch((error: unknown) => {
@@ -94,8 +93,14 @@ export function ManualTripPlanner() {
     }
     setSaving(true);
     try {
-      const destination = destinations.find((item) => item.name === form.destination);
-      if (!destination) throw new Error("Selecciona un destino disponible en el catálogo local.");
+      const destination = destinations.find((item) => item.name === form.destination) ?? {
+        name: form.destination,
+        places: [],
+        ...(form.destinationLocation?.name === form.destination && form.destinationLocation.latitude !== undefined
+          && form.destinationLocation.longitude !== undefined
+          ? { lat: form.destinationLocation.latitude, lng: form.destinationLocation.longitude }
+          : {}),
+      };
       const days = addDailySchedules(generateItineraryFromTrip(destination, requestForm));
       if (!days) throw new Error("No se pudo preparar un horario diario válido. Revisa las fechas o reduce la duración.");
       const durationDays = days.length;
@@ -161,14 +166,20 @@ export function ManualTripPlanner() {
       <form onSubmit={(event) => void prepareItinerary(event)} className="space-y-6">
         {step === 1 ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <label className="text-sm font-medium text-slate-700">Origen
-              <input value={form.origin} required maxLength={120} onChange={(event) => update("origin", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
-            </label>
-            <label className="text-sm font-medium text-slate-700">Destino
-              <select value={form.destination} onChange={(event) => update("destination", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3">
-                {destinations.map((destination) => <option key={destination.id} value={destination.name}>{destination.name} · {destination.country}</option>)}
-              </select>
-            </label>
+            <LocationAutocomplete
+              label="Origen"
+              value={form.origin}
+              required
+              onChange={(origin) => setForm((current) => ({ ...current, origin, originLocation: undefined }))}
+              onSelectionChange={(originLocation) => setForm((current) => ({ ...current, originLocation }))}
+            />
+            <LocationAutocomplete
+              label="Destino"
+              value={form.destination}
+              required
+              onChange={(destination) => setForm((current) => ({ ...current, destination, destinationLocation: undefined }))}
+              onSelectionChange={(destinationLocation) => setForm((current) => ({ ...current, destinationLocation }))}
+            />
             <label className="text-sm font-medium text-slate-700">Fecha de salida
               <input type="date" required min={today} value={form.startDate} onChange={(event) => updateDate("startDate", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
             </label>
@@ -182,23 +193,13 @@ export function ManualTripPlanner() {
           </div>
         ) : (
           <div className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
               <label className="text-sm font-medium text-slate-700">Presupuesto para actividades
-                <input type="number" min={0} step="0.01" required value={form.budget} onChange={(event) => update("budget", Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
+                <input type="number" min={0} step={10 ** -currencyFractionDigits(form.currency)} required value={form.budget} onChange={(event) => update("budget", Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3" />
               </label>
               <label className="text-sm font-medium text-slate-700">Moneda
                 <select value={form.currency} onChange={(event) => update("currency", event.target.value as Currency)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3">
-                  {(["EUR", "USD", "GBP", "MAD"] as const).map((currency) => <option key={currency}>{currency}</option>)}
-                </select>
-              </label>
-              <label className="text-sm font-medium text-slate-700">Tipo de viaje
-                <select value={form.travelType} onChange={(event) => update("travelType", event.target.value as TripFormValues["travelType"])} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3">
-                  {(["Combinado", "Cultural", "Económico", "Gastronómico", "Naturaleza", "Relax", "Aventura", "Familiar"] as const).map((type) => <option key={type}>{type}</option>)}
-                </select>
-              </label>
-              <label className="text-sm font-medium text-slate-700">Ritmo
-                <select value={form.pace} onChange={(event) => update("pace", event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 px-3">
-                  <option value="lento">Tranquilo</option><option value="equilibrado">Equilibrado</option><option value="rápido">Activo</option>
+                  {CURRENCY_OPTIONS.map(({ code, name }) => <option key={code} value={code}>{code} — {name}</option>)}
                 </select>
               </label>
             </div>
@@ -218,7 +219,7 @@ export function ManualTripPlanner() {
             <div className="rounded-2xl bg-slate-50 p-4">
               <h3 className="font-semibold">Revisión antes de preparar</h3>
               <p className="mt-2 text-sm text-slate-700">{form.origin || "Origen pendiente"} → {form.destination} · {form.startDate || "Salida pendiente"} – {form.endDate || "regreso pendiente"} · {form.travelers} viajeros</p>
-              <p className="mt-1 text-sm text-slate-700">{form.budget} {form.currency} para actividades · ritmo {form.pace} · {customInterests.length + form.interests.length} intereses</p>
+              <p className="mt-1 text-sm text-slate-700">{formatMoney(form.budget, form.currency)} para actividades · {customInterests.length + form.interests.length} intereses</p>
               <p className="mt-2 text-xs leading-relaxed text-slate-500">La propuesta se prepara localmente con los datos disponibles. Se marcará como modo demo y podrás revisar/editar el itinerario antes de guardarlo.</p>
               {profile.name && <p className="mt-1 text-xs text-slate-500">Preferencias cargadas para {profile.name}.</p>}
             </div>

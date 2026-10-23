@@ -45,6 +45,40 @@ describe("generateItineraryFromTrip", () => {
     expect(itinerary[0].items[0].currency).toBe("MAD");
   });
 
+  it("genera un itinerario para una ciudad escrita manualmente sin inventar coordenadas", () => {
+    const itinerary = generateItineraryFromTrip({ name: "San Sebastián", places: [] }, {
+      origin: "Madrid",
+      destination: "San Sebastián",
+      startDate: "2026-04-12",
+      endDate: "2026-04-12",
+      travelers: 1,
+      budget: 200,
+      currency: "EUR",
+      interests: [],
+      notes: "",
+    });
+
+    expect(itinerary[0].items[0].name).toBe("Paseo recomendado");
+    expect(itinerary[0].items[0]).not.toHaveProperty("lat");
+    expect(itinerary[0].items[0]).not.toHaveProperty("lng");
+  });
+
+  it("usa las coordenadas geográficas seleccionadas como metadatos del itinerario local", () => {
+    const itinerary = generateItineraryFromTrip({ name: "San Sebastián", places: [], lat: 43.3183, lng: -1.9812 }, {
+      origin: "Madrid",
+      destination: "San Sebastián",
+      startDate: "2026-04-12",
+      endDate: "2026-04-12",
+      travelers: 1,
+      budget: 200,
+      currency: "EUR",
+      interests: [],
+      notes: "",
+    });
+
+    expect(itinerary[0].items[0]).toMatchObject({ lat: 43.3183, lng: -1.9812 });
+  });
+
   it("prioriza lugares vinculados a los intereses y calcula el total para el grupo", () => {
     const itinerary = generateItineraryFromTrip(destinations[0], {
       origin: "Madrid",

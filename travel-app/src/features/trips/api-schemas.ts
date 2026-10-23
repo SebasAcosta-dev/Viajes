@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { TripDraft } from "@/lib/persistence/types";
 import { validateTripDraft } from "@/lib/persistence/validation";
 import { schemaFromValidator } from "@/lib/api/http";
-import type { TripStatus } from "@/lib/types";
+import type { Currency, TripStatus } from "@/lib/types";
+import { isCurrency } from "@/lib/currency-catalog";
 
 const tripStatuses: TripStatus[] = ["borrador", "planificado", "activo", "completado"];
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
@@ -20,7 +21,7 @@ export const tripUpdateSchema = z.object({
   endDate: isoDateSchema.nullable().optional(),
   travelers: z.number().int().min(1).max(100).optional(),
   budget: z.number().finite().min(0).optional(),
-  currency: z.enum(["EUR", "USD", "GBP", "MAD"]).optional(),
+  currency: z.custom<Currency>(isCurrency, "La moneda no es válida.").optional(),
   status: z.enum(tripStatuses).optional(),
 }).strict().superRefine((value, context) => {
   if (typeof value.startDate === "string" && typeof value.endDate === "string" && value.endDate < value.startDate) {

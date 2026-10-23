@@ -1,4 +1,7 @@
-export type Currency = "EUR" | "USD" | "GBP" | "MAD";
+import type { Currency } from "@/lib/currency-catalog";
+import type { LocationSuggestion } from "@/lib/location-search";
+
+export type { Currency } from "@/lib/currency-catalog";
 export type TravelType =
   | "Económico"
   | "Cultural"
@@ -65,15 +68,17 @@ export interface Destination {
 
 export interface TripFormValues {
   origin: string;
+  originLocation?: LocationSuggestion;
   destination: string;
+  destinationLocation?: LocationSuggestion;
   startDate: string;
   endDate: string;
   travelers: number;
   budget: number;
   currency: Currency;
   interests: string[];
-  travelType: TravelType;
-  pace: string;
+  travelType?: TravelType;
+  pace?: string;
   notes: string;
 }
 
